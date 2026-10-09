@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.3.0';
+  const APP_VERSION = '2.4.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -372,12 +372,21 @@
     return i < 0 ? '' : `<rect class="selband" x="${L + i * bw + 1}" y="${T - 14}" width="${bw - 2}" height="${h + 14}" rx="6" fill="${css('--selbg')}" stroke="${css('--selln')}" stroke-width="1"/>`;
   }
   const opac = r => sel && r.ordem !== sel ? ' opacity=".42"' : '';
+  const SEMANA_ABR = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
   function xLabels(items, t, L, bw, H) {
     const step = Math.ceil(items.length / (t === 'DIA' ? 14 : 12));
     return items.map((d, i) => {
       const cx = L + i * bw + bw / 2, s = d.ordem === sel;
       const cor = s ? css('--selink') : css('--ink2');
-      if (t === 'DIA') return i % step === 0 || i === items.length - 1 || s ? `<text x="${cx}" y="${H - 8}" font-size="10" font-weight="${s ? 800 : 400}" text-anchor="middle" fill="${cor}">${P.rotulo(d, true)}</text>` : '';
+      if (t === 'DIA') {
+        // dia do mês + dia da semana abreviado (como no calendário); domingo em vermelho
+        if (!(i % step === 0 || i === items.length - 1 || s)) return '';
+        const [yy, mm, dd] = d.inicio.split('-').map(Number);
+        const wd = new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay();
+        const dom = wd === 0;
+        return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 10 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${dom ? css('--vermelho') : cor}">${P.rotulo(d, true)}</text>
+        <text class="wd" x="${cx}" y="${H - 8}" font-size="${items.length > 10 ? 8.5 : 9.5}" font-weight="${dom || s ? 700 : 400}" text-anchor="middle" fill="${dom ? css('--vermelho') : s ? css('--selink') : css('--ink3')}">${SEMANA_ABR[wd]}</text>`;
+      }
       return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${cor}">${P.rotulo(d, true)}</text>
         <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${s ? css('--selink') : d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo && !s ? 400 : 700}">${d.dias}d</text>`;
     }).join('');
@@ -392,7 +401,7 @@
   const largura = bw => Math.max(8, Math.min(28, bw * 0.56));
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = mensal ? 220 : 216, L = 30, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = 220, L = 30, R = 8, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
     const meta = items[items.length - 1].meta || 0.8;
     const vals = items.map(d => d.ns ?? 0);
     const lo = Math.max(0, Math.floor((Math.min(...vals, meta) - 0.05) * 10) / 10), hi = 1;
@@ -416,7 +425,7 @@
   // Volume / atendidas / ≤5min: barras sobrepostas, todas com a mesma largura; só o volume (total) tem rótulo
   function chartVol(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = mensal ? 226 : 216, L = 38, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = 226, L = 38, R = 8, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
     const k = d => mensal ? 1 / (d.dias || 1) : 1;
     const max = Math.max(...items.map(d => d.volume * k(d))) * 1.02 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
