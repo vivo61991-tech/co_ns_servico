@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.6.0';
+  const APP_VERSION = '2.7.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -93,6 +93,7 @@
   }
   function render() {
     main.classList.toggle('modo-painel', view === 'painel');
+    $('#bShare').hidden = !(view === 'painel' && snaps.length);
     if (view === 'painel') renderPainel();
     else if (view === 'dados') preview ? renderPreview() : renderDados();
     else renderHist();
@@ -543,6 +544,163 @@
     main.querySelectorAll('table.tsel tbody tr').forEach(tr => tr.addEventListener('click', () => toggleSel(tr.dataset.ordem)));
   }
 
+  // ---------------- Compartilhar (WhatsApp) ----------------
+  // Imagem do NS por dia + resumo do último dia; o link do app vai no texto da mensagem
+  // (o WhatsApp não torna clicável um link desenhado dentro da imagem).
+  const APP_URL = 'https://vivo61991-tech.github.io/co_ns_servico/';
+  const FRASE = 'Acompanhe a evolução diária do Nível de Serviço (NS 5 min): percentual de atendimentos realizados em até 5 minutos, comparado à meta de {meta}.';
+  const SEMANA_MIN = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const IMG = { W: 1080, H: 1350 };
+  // paleta fixa (clara) para a imagem, independente do modo escuro do aparelho
+  const PAL = {
+    bg: '#F5F3F8', card: '#FFFFFF', line: '#E6E0EE', ink: '#1F1530', ink2: '#5B5068', ink3: '#9A90A8',
+    p800: '#52227A', p700: '#642A90', p500: '#8549B5', p300: '#B48FD3',
+    VERDE: '#BCDD83', AMARELO: '#FFC266', VERMELHO: '#F286AF', dom: '#EC357D',
+    up: '#5F8A12', down: '#D0256A', selbg: '#FFF4E3', selln: '#FFD9A0',
+    pill: { VERDE: ['#EEF7DC', '#5F8A12'], AMARELO: ['#FFF1DC', '#B36800'], VERMELHO: ['#FDE6EF', '#C41A60'] },
+  };
+  const FONTE = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+  function dadosCompartilhar() {
+    const all = [...periodos().values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
+    const dias = all.filter(r => r.tipo === 'DIA');
+    if (!dias.length) return null;
+    const items = dias.slice(-7);
+    const cur = dias[dias.length - 1], prev = dias.length > 1 ? dias[dias.length - 2] : null;
+    const wd = r => { const [y, m, d] = r.inicio.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+    const dPP = prev && cur.ns != null && prev.ns != null ? r1((cur.ns - prev.ns) * 100) : null;
+    return { items, cur, prev, dPP, wd, meta: cur.meta || 0.8, dataRef: snaps[0] && snaps[0].dataRef };
+  }
+  const ddmm = r => r.inicio.slice(8, 10) + '/' + r.inicio.slice(5, 7);
+  const pct1 = v => (v * 100).toFixed(1).replace('.', ',') + '%';
+  const ppTxt = v => (v === 0 ? '' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1).replace('.', ',') + ' p.p.';
+
+  function textoCompartilhar(d) {
+    const c = d.cur;
+    const linha2 = `NS do dia: *${pct1(c.ns)}* · ${stNome(c.status)}` + (d.dPP == null ? '' : ` · ${ppTxt(d.dPP)} vs ${ddmm(d.prev)}`);
+    return [
+      `*NS 5 min · B2C Suporte* — ${ddmm(c)} (${SEMANA_MIN[d.wd(c)]})`,
+      linha2,
+      '',
+      FRASE.replace('{meta}', pct1(d.meta).replace(',0%', '%')),
+      '',
+      'Toque no link para abrir o painel completo:',
+      APP_URL,
+    ].join('\n');
+  }
+
+  function svgCompartilhar(d) {
+    const { W, H } = IMG, c = d.cur, e = esc;
+    const T = (x, y, s, txt, o = {}) => `<text x="${x}" y="${y}" font-size="${s}" font-family="${FONTE}" font-weight="${o.w || 400}" fill="${o.f || PAL.ink}" text-anchor="${o.a || 'start'}"${o.halo ? ` paint-order="stroke" stroke="${PAL.card}" stroke-width="6" stroke-linejoin="round"` : ''}${o.op ? ` opacity="${o.op}"` : ''}>${e(txt)}</text>`;
+    const pc = PAL.pill[c.status] || [PAL.line, PAL.ink2];
+    const stT = stNome(c.status), pillW = 28 + stT.length * 15.5;
+    const dCor = d.dPP == null || d.dPP === 0 ? PAL.ink2 : d.dPP > 0 ? PAL.up : PAL.down;
+    // ---- gráfico ----
+    const it = d.items, CX0 = 120, CX1 = 1000, CY0 = 720, CY1 = 1060;
+    const lo = Math.max(0, Math.floor((Math.min(...it.map(r => r.ns ?? 0), d.meta) - 0.05) * 10) / 10), hi = 1;
+    const y = v => CY1 - (v - lo) / (hi - lo) * (CY1 - CY0);
+    const bw = (CX1 - CX0) / it.length, w = Math.max(20, Math.min(64, bw * 0.56)), r = 8;
+    let g = '';
+    for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${CX0}" x2="${CX1}" y1="${y(v)}" y2="${y(v)}" stroke="${PAL.line}" stroke-width="2"/>` + T(CX0 - 14, y(v) + 8, 24, String(Math.round(v * 100)), { f: PAL.ink3, a: 'end' });
+    const iUlt = it.length - 1;
+    const band = `<rect x="${CX0 + iUlt * bw + 4}" y="${CY0 - 46}" width="${bw - 8}" height="${CY1 - CY0 + 136}" rx="14" fill="${PAL.selbg}" stroke="${PAL.selln}" stroke-width="2"/>`;
+    const bars = it.map((x, i) => {
+      const bx = CX0 + i * bw + (bw - w) / 2, yt = y(x.ns ?? lo), rr = Math.min(r, w / 2, CY1 - yt);
+      return CY1 - yt <= 0 ? '' : `<path d="M${bx},${CY1} V${yt + rr} A${rr},${rr} 0 0 1 ${bx + rr},${yt} H${bx + w - rr} A${rr},${rr} 0 0 1 ${bx + w},${yt + rr} V${CY1} Z" fill="${PAL[x.status] || PAL.ink3}"/>`;
+    }).join('');
+    const vals = it.map((x, i) => x.ns == null ? '' : T(CX0 + i * bw + bw / 2, y(x.ns) - 14, 30, (x.ns * 100).toFixed(1).replace('.', ','), { w: 800, a: 'middle', halo: true }));
+    const meta = `<line x1="${CX0}" x2="${CX1}" y1="${y(d.meta)}" y2="${y(d.meta)}" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="12 9"/>`;
+    const xl = it.map((x, i) => {
+      const cx = CX0 + i * bw + bw / 2, dom = d.wd(x) === 0;
+      return T(cx, CY1 + 44, 30, String(+x.inicio.slice(8, 10)), { w: 700, a: 'middle', f: dom ? PAL.dom : PAL.ink2 }) +
+        T(cx, CY1 + 80, 23, ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'][d.wd(x)], { w: dom ? 700 : 400, a: 'middle', f: dom ? PAL.dom : PAL.ink3 });
+    }).join('');
+    const legItem = (x, cor, txt) => `<rect x="${x}" y="1173" width="22" height="22" rx="5" fill="${cor}"/>` + T(x + 32, 1192, 25, txt, { f: PAL.ink2 });
+    const leg = legItem(96, PAL.VERDE, 'Meta atingida') + legItem(330, PAL.AMARELO, 'Em atenção') + legItem(540, PAL.VERMELHO, 'Crítico') +
+      `<line x1="700" x2="746" y1="1184" y2="1184" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="10 7"/>` + T(758, 1192, 25, `meta ${pct1(d.meta).replace(',0%', '%')}`, { f: PAL.ink2 });
+    const agora = new Date();
+    const gerado = `Gerado em ${agora.toLocaleDateString('pt-BR')} às ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+  <defs><linearGradient id="hd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${PAL.p800}"/><stop offset=".6" stop-color="${PAL.p700}"/><stop offset="1" stop-color="${PAL.p500}"/></linearGradient></defs>
+  <rect width="${W}" height="${H}" fill="${PAL.bg}"/>
+  <rect width="${W}" height="200" fill="url(#hd)"/>
+  ${T(60, 92, 52, 'NS 5 min · B2C Suporte', { w: 800, f: '#FFFFFF' })}
+  ${T(60, 146, 29, `Nível de serviço diário · dados até ${fmtData(d.dataRef || c.inicio)}`, { f: '#FFFFFF', op: .88 })}
+  <rect x="48" y="236" width="984" height="300" rx="28" fill="${PAL.card}" stroke="${PAL.line}" stroke-width="2"/>
+  ${T(92, 300, 30, `Último dia · ${P.rotulo(c)} · ${['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'][d.wd(c)]}`, { f: PAL.ink2 })}
+  ${T(88, 418, 112, pct1(c.ns), { w: 800 })}
+  <rect x="92" y="446" width="${pillW}" height="52" rx="26" fill="${pc[0]}"/>
+  ${T(92 + pillW / 2, 481, 27, stT, { w: 700, f: pc[1], a: 'middle' })}
+  ${T(92 + pillW + 22, 481, 26, `meta ${pct1(d.meta).replace(',0%', '%')}`, { f: PAL.ink3 })}
+  <line x1="600" x2="600" y1="276" y2="496" stroke="${PAL.line}" stroke-width="2"/>
+  ${T(640, 300, 30, d.prev ? `vs ${P.rotulo(d.prev)}` : 'vs dia anterior', { f: PAL.ink2 })}
+  ${T(636, 384, 66, d.dPP == null ? '—' : ppTxt(d.dPP), { w: 800, f: dCor })}
+  ${T(640, 430, 27, d.prev ? `NS ${pct1(d.prev.ns)}` : '', { f: PAL.ink3 })}
+  ${T(640, 481, 27, `${fmtInt(c.ate)} de ${fmtInt(c.total)} em até 5 min`, { f: PAL.ink2 })}
+  <rect x="48" y="572" width="984" height="652" rx="28" fill="${PAL.card}" stroke="${PAL.line}" stroke-width="2"/>
+  ${T(92, 636, 32, `NS por dia · últimos ${it.length} dias`, { w: 800, f: PAL.p700 })}
+  ${band}${g}${bars}${meta}${vals.join('')}${xl}${leg}
+  <text x="60" y="1280" font-size="28" font-family="${FONTE}" fill="${PAL.ink2}">Painel completo: <tspan font-weight="700" fill="${PAL.p700}">${e(APP_URL.replace(/^https:\/\//, '').replace(/\/$/, ''))}</tspan></text>
+  ${T(60, 1318, 22, gerado, { f: PAL.ink3 })}
+</svg>`;
+  }
+
+  async function pngDeSvg(svg) {
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+    try {
+      const img = new Image(); img.src = url; await img.decode();
+      const cv = document.createElement('canvas'); cv.width = IMG.W; cv.height = IMG.H;
+      const ctx = cv.getContext('2d'); ctx.fillStyle = PAL.bg; ctx.fillRect(0, 0, IMG.W, IMG.H); ctx.drawImage(img, 0, 0);
+      return await new Promise((res, rej) => cv.toBlob(b => b ? res(b) : rej(new Error('Falha ao gerar a imagem')), 'image/png'));
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  async function abrirCompartilhar() {
+    const d = dadosCompartilhar();
+    if (!d) { toast('Ainda não há dados diários para compartilhar.'); return; }
+    const bg = document.createElement('div'); bg.className = 'sheet-bg';
+    bg.innerHTML = `<div class="sheet"><h3>Compartilhar no WhatsApp</h3>
+      <div class="small muted" style="margin-bottom:8px">Confira a imagem e a mensagem antes de enviar.</div>
+      <div id="shPrev" class="shprev"><div class="small muted" style="padding:40px 0;text-align:center">Gerando a imagem…</div></div>
+      <pre class="shmsg" id="shMsg"></pre>
+      <button class="btn" id="shEnviar" disabled>Enviar pelo WhatsApp</button>
+      <div class="row" style="margin-top:10px"><button class="btn sec" id="shBaixar" disabled>Baixar imagem</button><button class="btn sec" id="shCopiar">Copiar mensagem</button></div>
+      <button class="btn sec" id="shFechar" style="margin-top:10px">Fechar</button></div>`;
+    document.body.appendChild(bg);
+    const texto = textoCompartilhar(d);
+    bg.querySelector('#shMsg').textContent = texto;
+    const fechar = () => { bg.remove(); if (urlPrev) URL.revokeObjectURL(urlPrev); };
+    bg.addEventListener('click', e => { if (e.target === bg) fechar(); });
+    bg.querySelector('#shFechar').onclick = fechar;
+    bg.querySelector('#shCopiar').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Mensagem copiada'); } catch (e) { toast('Não consegui copiar — selecione o texto e copie.'); } };
+    let urlPrev = null, file = null;
+    const nome = `ns-diario-${d.cur.inicio}.png`;
+    try {
+      const blob = await pngDeSvg(svgCompartilhar(d));   // gera antes do toque em Enviar (o celular exige o toque "fresco" para compartilhar)
+      file = new File([blob], nome, { type: 'image/png' });
+      urlPrev = URL.createObjectURL(blob);
+      bg.querySelector('#shPrev').innerHTML = `<img src="${urlPrev}" alt="Imagem do NS por dia" id="shImg">`;
+      bg.querySelector('#shEnviar').disabled = false; bg.querySelector('#shBaixar').disabled = false;
+    } catch (err) {
+      bg.querySelector('#shPrev').innerHTML = `<div class="banner bad">Não consegui gerar a imagem: ${esc(err.message)}</div>`;
+      return;
+    }
+    const baixar = () => { const a = document.createElement('a'); a.href = urlPrev; a.download = nome; document.body.appendChild(a); a.click(); a.remove(); };
+    bg.querySelector('#shBaixar').onclick = baixar;
+    bg.querySelector('#shEnviar').onclick = async () => {
+      // copia a mensagem também: alguns celulares (iPhone) mandam a imagem sem o texto — aí é só colar
+      if (navigator.clipboard) navigator.clipboard.writeText(texto).catch(() => {});
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], text: texto }); return; }
+        catch (err) { if (err && err.name === 'AbortError') return; }
+      }
+      // sem compartilhamento de arquivo (ex.: computador): baixa a imagem e abre o WhatsApp com a mensagem
+      baixar();
+      window.open('https://wa.me/?text=' + encodeURIComponent(texto), '_blank', 'noopener');
+      toast('Imagem baixada — anexe-a na conversa do WhatsApp que abriu.', 4500);
+    };
+  }
+
   // ---------------- Histórico ----------------
   function renderHist() {
     main.innerHTML = `
@@ -557,6 +715,7 @@
         <div class="small muted" style="margin-bottom:10px">Os dados ficam neste aparelho. Exporte de vez em quando.</div>
         <div class="row"><button class="btn sec" id="bExp">Exportar</button><button class="btn sec" id="bImp">Importar backup</button></div>
         <div class="small muted" id="persist" style="margin-top:10px"></div>
+        <div class="small muted" style="margin-top:6px">NS Painel v${APP_VERSION}</div>
       </div>`;
     main.querySelectorAll('.it').forEach(it => it.onclick = () => abrirSnap(+it.dataset.id));
     $('#bExp').onclick = exportar;
@@ -616,5 +775,6 @@
     buscarPublicado(false);
   })();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado };
+  $('#bShare').addEventListener('click', abrirCompartilhar);
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(dadosCompartilhar()), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
 })();

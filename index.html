@@ -177,10 +177,19 @@ html,body{overflow-x:hidden}
 /* inclui os contêineres das tabelas (com rolagem horizontal o navegador "roubava" o gesto) */
 #main.modo-painel,#main.modo-painel *{touch-action:pan-y pinch-zoom}
 #pag{will-change:transform}
+/* compartilhar */
+.hbtn{display:inline-flex;align-items:center;gap:6px;border:1px solid rgba(255,255,255,.35);background:rgba(255,255,255,.12);color:#fff;border-radius:99px;padding:6px 12px;font:650 13px system-ui;cursor:pointer}
+.hbtn svg{width:16px;height:16px}
+.hbtn[hidden]{display:none}
+.shprev{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:var(--bg);margin-bottom:10px}
+.shprev img{width:100%;display:block}
+.shmsg{white-space:pre-wrap;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 12px;color:var(--ink2)}
+header h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+@media (max-width:480px){header .ver{display:none}}
 </style>
 </head>
 <body>
-<header><h1>NS Painel · B2C Suporte</h1><span class="ver" id="ver"></span></header>
+<header><h1>NS Painel · B2C Suporte</h1><span class="ver" id="ver"></span><button id="bShare" class="hbtn" hidden aria-label="Compartilhar no WhatsApp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg><span>Compartilhar</span></button></header>
 <main id="main"></main>
 <nav id="nav">
   <button data-v="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Painel</button>

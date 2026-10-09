@@ -1,4 +1,4 @@
-# NS Painel · B2C Suporte (v2.6.0)
+# NS Painel · B2C Suporte (v2.7.0)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
