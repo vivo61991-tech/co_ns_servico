@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.9.1';
+  const APP_VERSION = '2.9.2';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -54,12 +54,15 @@
   async function reload() {
     snaps = (await dbAll()).sort((a, b) => (b.dataRef || '').localeCompare(a.dataRef || '') || b.id - a.id);
   }
-  // valor vigente de cada período = o do arquivo com dados mais recentes que o contém
+  // O painel mostra SOMENTE o TXT mais recente (snaps[0]), exatamente como ele está:
+  // nada de completar com períodos de arquivos anteriores (eles ficam só no Histórico).
   function periodos() {
     const map = new Map();
+    const atual = snaps[0];
+    if (!atual) return map;
     // NS exato (ATE_5_MIN ÷ TOTAL_ATENDIDAS) para exibir e comparar: evita arredondar duas vezes
     // (ex.: 1.802 ÷ 2.414 = 74,648% → 74,6%; pelo NS de 4 casas 0,7465 sairia 74,7%)
-    for (const s of snaps) for (const r of s.rows) if (!map.has(r.ordem)) map.set(r.ordem, { ...r, ns: r.total > 0 ? r.ate / r.total : null });
+    for (const r of atual.rows) map.set(r.ordem, { ...r, ns: r.total > 0 ? r.ate / r.total : null });
     return map;
   }
 
@@ -810,7 +813,7 @@
             <div class="t"><b>Dados até ${fmtData(s.dataRef)}</b> <span class="origem ${s.origem}">${s.origem}</span>
             <div class="small muted">${s.rows.length} linhas · recebido ${fmtDT(s.id)}${s.colunasExtras && s.colunasExtras.length ? ' · +' + s.colunasExtras.length + ' coluna(s)' : ''}</div></div>›</div>`).join('')}</div>`
         : '<div class="empty">Nada salvo ainda.</div>'}
-        <div class="small muted" style="margin-top:8px">O painel usa, para cada período, o valor do arquivo com dados mais recentes. Arquivos antigos ficam como histórico.</div>
+        <div class="small muted" style="margin-top:8px">O painel mostra somente o arquivo com os dados mais recentes, exatamente como está no TXT. Os anteriores ficam aqui só como histórico.</div>
       </div>
       <div class="card"><h2>Backup</h2>
         <div class="small muted" style="margin-bottom:10px">Os dados ficam neste aparelho. Exporte de vez em quando.</div>
