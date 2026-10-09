@@ -191,6 +191,19 @@ header h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .shteams{background:#fff;color:#1F1530;border:1px solid var(--line);border-radius:10px;padding:6px 12px;margin:0 0 12px;max-height:46vh;overflow:auto}
 .shteams p{margin:8px 0}
 .shteams table{font-variant-numeric:tabular-nums}
+/* gráfico do meio: barras de chamadas recebidas + linha de NS */
+:root{--barR:#C9AEE3}
+@media (prefers-color-scheme: dark){:root{--barR:#6b4a8f}}
+.legend i.ln.mk{position:relative;width:18px}
+.legend i.ln.mk::after{content:"";position:absolute;left:5px;top:-5px;width:6px;height:6px;border:2px solid var(--laranjaL);border-radius:50%;background:var(--card)}
+.kdist .v .dlt{font-size:inherit}
+/* linha do NS em laranja (#FF9901) */
+:root{--laranjaL:#FF9901}
+@media (prefers-color-scheme: dark){:root{--laranjaL:#FFB038}}
+/* colunas de variação */
+table.conf td.tv{font-size:.92em;white-space:nowrap}
+table.conf td.tv .dlt{font-weight:700}
+table.conf td.nd{color:var(--ink3)}
 </style>
 </head>
 <body>

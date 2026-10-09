@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.9.2';
+  const APP_VERSION = '3.1.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -201,9 +201,9 @@
     const tabelaTipo = t => {
       const rs = pr.rows.filter(r => r.tipo === t); if (!rs.length) return '';
       return `<h3 class="sub">${NOME[t]} (${rs.length})</h3><div style="overflow-x:auto"><table class="conf" style="cursor:default">
-        <thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
+        <thead><tr><th>PERÍODO</th><th>DIAS</th><th>RECEBIDAS</th><th>NS</th></tr></thead><tbody>
         ${rs.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r))}</td><td class="${r.completo ? '' : 'dias-aberto'}">${r.tipo === 'DIA' ? '1' : r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>
-          <td>${r.volume}</td><td>${r.total}</td><td>${r.ate}</td><td><span class="pill ${r.status}">${fmtNs(r.ns)}</span></td></tr>`).join('')}
+          <td>${fmtInt(r.volume)}</td><td><span class="pill ${r.status}">${fmtPct(r.total > 0 ? r.ate / r.total : null)}</span></td></tr>`).join('')}
         </tbody></table></div>`;
     };
     main.innerHTML = `
@@ -212,7 +212,7 @@
         ${pr.rows.length ? `<div class="chips"><span class="chip">${pr.resumo.MES} meses</span><span class="chip">${pr.resumo.SEMANA} semanas</span><span class="chip">${pr.resumo.DIA} dias</span><span class="chip">dados até ${fmtData(pr.dataRef)}</span></div>` : ''}
         ${pr.erros.length ? `<div class="banner bad" style="margin-top:8px"><b>${pr.erros.length} erro(s) — corrija o arquivo e importe de novo.</b> Nada foi salvo.</div><ul class="list-msg err">${pr.erros.map(msgLi).join('')}</ul>` : ''}
         ${dup ? `<div class="banner info" style="margin-top:8px">Este arquivo já foi importado em ${fmtDT(dup.id)} — não há nada novo para salvar.</div>` : ''}
-        ${!pr.erros.length && !dup ? `<div class="banner ok" style="margin-top:8px"><b>Arquivo conferido.</b> ${pr.rows.length} linhas válidas: NS = ATE_5_MIN ÷ TOTAL_ATENDIDAS em todas${pr.info.length ? ' · ' + esc(pr.info.join(' ')) : '.'}</div>` : ''}
+        ${!pr.erros.length && !dup ? `<div class="banner ok" style="margin-top:8px"><b>Arquivo conferido.</b> ${pr.rows.length} linhas válidas, NS conferido em todas${pr.info.length ? ' · ' + esc(pr.info.join(' ')) : '.'}</div>` : ''}
         ${pr.colunasExtras.length ? `<div class="banner info small">Colunas novas encontradas: <b>${pr.colunasExtras.map(esc).join(', ')}</b>. Ficam guardadas e aparecem no detalhe de cada período.</div>` : ''}
         ${pr.avisos.length ? `<h3 class="sub">Avisos (não impedem salvar)</h3><ul class="list-msg warn">${pr.avisos.map(msgLi).join('')}</ul>` : ''}
         ${mudancas.length ? `<h3 class="sub">Mudou em período fechado</h3><ul class="list-msg warn">${mudancas.map(m => `<li><b>${esc(m.periodo)}</b> · ${m.col}: salvo ${m.antes} → arquivo ${m.agora}</li>`).join('')}</ul>
@@ -334,9 +334,11 @@
     window.scrollTo(0, y);
   }
   const LIMITE = { DIA: 14, SEMANA: 12, MES: 12 };
-  function metaFalta(tot, ate, meta) {
-    const ns = tot > 0 ? ate / tot : null;
-    return { ns, falta: ns != null && ns < meta ? Math.ceil(meta * tot - ate - 1e-9) : 0, folga: ns != null && ns >= meta ? Math.floor(ate / meta - tot + 1e-9) : 0 };
+  // distância do NS até a meta, em pontos percentuais (verde acima / vermelho abaixo)
+  function cardDist(r, kc, titulo, extra = '') {
+    if (!r || r.ns == null) return '';
+    const m = r.meta || 0.8, d = (r.ns - m) * 100;
+    return `<div class="${kc} kdist"><div class="l">${titulo}</div><div class="v">${pp(d)}</div><div class="s">${r1(d) >= 0 ? 'acima' : 'abaixo'} da meta de ${fmtPct(m)}${extra}</div></div>`;
   }
   const nomeCur = r => r.tipo === 'MES' ? P.rotulo(r).replace('*', '') : r.tipo === 'SEMANA' ? 'Semana ' + P.rotulo(r).replace('*', '') : P.rotulo(r);
   const diasTxt = r => r.completo ? `${r.dias} dias` : `${r.dias} de ${r.diasPeriodo} dias`;
@@ -352,10 +354,19 @@
   }
   // volume: só a seta (mais volume não é bom nem ruim)
   const pc = v => { const a = r1(v * 100); return `<span class="dlt vol">${seta(a)}${Math.abs(a).toFixed(1).replace('.', ',')}%</span>`; };
+  // células da tabela: ▲ verde quando sobe, ▼ vermelho quando cai
+  const tdVar = (a, suf) => a == null ? '<td class="tv nd">—</td>'
+    : `<td class="tv"><span class="dlt ${a === 0 ? 'neu' : a > 0 ? 'up' : 'down'}">${a === 0 ? '' : a > 0 ? '▲' : '▼'}${Math.abs(a).toFixed(1).replace('.', ',')}${suf}</span></td>`;
+  function varRecebidas(r, ant) {
+    // período aberto (mês/semana) ainda não tem todos os dias: comparar o total seria injusto
+    if (!ant || !r.completo || !ant.completo || !(ant.volume > 0)) return null;
+    return r1((r.volume / ant.volume - 1) * 100);
+  }
+  const varNs = (r, ant) => ant && r.ns != null && ant.ns != null ? r1((r.ns - ant.ns) * 100) : null;
   const nomePrev = (t, r) => !r ? 'anterior' : t === 'DIA' ? P.rotulo(r) : P.rotulo(r, true).replace('*', '');
   function detalhe(d) {
     const ex = d.extras && Object.keys(d.extras).length ? ' · ' + Object.entries(d.extras).map(([c, v]) => `${c} ${typeof v === 'number' ? String(v).replace('.', ',') : v}`).join(' · ') : '';
-    const base = `${P.rotulo(d)}${d.tipo === 'DIA' ? '' : ` (${diasTxt(d)})`} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)}`;
+    const base = `${P.rotulo(d)}${d.tipo === 'DIA' ? '' : ` (${diasTxt(d)})`} — NS ${fmtPct(d.ns)} · ${fmtInt(d.volume)} chamadas recebidas`;
     return base + (d.tipo === 'DIA' ? '' : ` (${fmtInt(d.volume / d.dias)}/dia)`) + ex;
   }
 
@@ -404,34 +415,29 @@
       const dVol = prev ? cur.volume / prev.volume - 1 : null;
       let fCard;
       if (selRow) {
-        // dia selecionado: quanto faltou (ou sobrou) naquele dia
-        const f = metaFalta(cur.total, cur.ate, meta);
-        fCard = `<div class="${kc}"><div class="l">${f.falta ? 'Faltaram p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min no dia' : 'atend. podiam passar de 5 min'}</div></div>`;
+        fCard = cardDist(cur, kc, `Distância da meta · ${esc(P.rotulo(cur))}`);
       } else {
         const mesAberto = all.filter(r => r.tipo === 'MES' && !r.completo).slice(-1)[0] || all.filter(r => r.tipo === 'MES').slice(-1)[0];
-        const f = mesAberto ? metaFalta(mesAberto.total, mesAberto.ate, mesAberto.meta) : null;
-        fCard = f ? `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(mesAberto, true))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'} · NS ${fmtPct(f.ns)}</div></div>` : '';
+        fCard = cardDist(mesAberto, 'kpi', `Distância da meta · ${mesAberto ? esc(P.rotulo(mesAberto, true)) : ''}`, mesAberto ? ` · NS ${fmtPct(mesAberto.ns)}` : '');
       }
       k = `
         <div class="${kc} wide"><div class="l">${selRow ? 'Dia selecionado' : 'Último dia'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
           <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)}</div></div>
         ${fCard}
         <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP, cur.status)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
-        <div class="${kc} wide"><div class="l">Volume · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
+        <div class="${kc} wide"><div class="l">Chamadas recebidas · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${dVol == null ? 'no dia' : `${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     } else {
-      const f = metaFalta(cur.total, cur.ate, meta);
       const vd = r => r.volume / r.dias;
       const dVol = prev ? vd(cur) / vd(prev) - 1 : null;
       const ab = t === 'MES' ? 'mês aberto' : 'semana aberta', fe = t === 'MES' ? 'fechado' : 'fechada';
-      const tFalta = f.falta ? (cur.completo ? 'Faltaram p/ meta' : 'Faltam p/ meta') : 'Folga na meta';
       k = `
         <div class="${kc} wide"><div class="l">${esc(nomeCur(cur))} ${cur.completo ? `<span class="fechado">${fe}</span>` : `<span class="aberto">${ab}</span>`}${selRow ? ' <span class="selflag">selecionado</span>' : ''}</div>
           <div class="v">${fmtPct(cur.ns)}</div>
           <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
-        <div class="${kc}"><div class="l">${tFalta}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : (cur.completo ? 'atend. podiam passar de 5 min' : 'atend. podem passar de 5 min')}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
+        ${cardDist(cur, kc, 'Distância da meta', cur.completo ? '' : ` · com ${cur.dias} dias`)}
         <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP, cur.status)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
-        <div class="${kc} wide"><div class="l">Volume médio por dia · ${esc(P.rotulo(cur, true))}</div><div class="v">${fmtInt(vd(cur))}</div>
-          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
+        <div class="${kc} wide"><div class="l">Chamadas recebidas por dia · ${esc(P.rotulo(cur, true))}</div><div class="v">${fmtInt(vd(cur))}</div>
+          <div class="s">${fmtInt(cur.volume)} recebidas em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     }
     const tituloNS = t === 'DIA' ? 'NS por dia' : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
     const legNS = `<div class="legend"><span><i style="background:var(--verdeS)"></i>Meta atingida</span><span><i style="background:var(--amareloS)"></i>Em atenção</span><span><i style="background:var(--vermelhoS)"></i>Crítico</span>${t === 'DIA' ? '' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta</span></div>`;
@@ -443,14 +449,14 @@
       <div style="height:12px"></div>
       <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
         <div class="cap${selRow ? ' capsel' : ''}" id="cap1">${cap}</div></div>
-      <div class="card chart"><h2>${t === 'DIA' ? 'Volume e atendimento por dia' : 'Volume médio por dia'}</h2>${chartVol(items, t)}
-        <div class="legend"><span><i style="background:var(--bar1)"></i>volume${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar2)"></i>atendidas${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar3)"></i>até 5 min${t === 'DIA' ? '' : '/dia'}</span></div>
+      <div class="card chart"><h2>${t === 'DIA' ? 'Chamadas recebidas e NS por dia' : 'Chamadas recebidas por dia e NS'}</h2>${chartVol(items, t)}
+        <div class="legend"><span><i style="background:var(--barR)"></i>chamadas recebidas${t === 'DIA' ? '' : ' (média/dia)'}</span><span><i class="ln mk" style="border-color:var(--laranjaL)"></i>NS 5 min (eixo à direita)</span></div>
         <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? dica : 'Dividido pela QUANTIDADE_DIAS, para comparar o período aberto com os fechados. ' + dica)}</div></div>
       <div class="card"><h2>${t === 'DIA' ? 'Dias' : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf tsel">
-        <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
-        ${[...items].reverse().map(r => `<tr data-ordem="${r.ordem}" class="${r.ordem === sel ? 'sel' : ''}" aria-selected="${r.ordem === sel}"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
-          <td>${fmtInt(r.volume)}</td><td>${fmtInt(r.total)}</td><td>${fmtInt(r.ate)}</td><td><span class="pill ${r.status}">${fmtPct(r.ns)}</span></td></tr>`).join('')}</tbody></table></div>
-        ${t === 'DIA' ? '' : `<div class="small muted" style="margin-top:6px">${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; os totais cobrem só esses dias.</div>`}</div>`;
+        <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>RECEB.</th><th>VAR.</th><th>NS</th><th>VAR. NS</th></tr></thead><tbody>
+        ${[...items].reverse().map(r => { const ant = serie[serie.indexOf(r) - 1]; return `<tr data-ordem="${r.ordem}" class="${r.ordem === sel ? 'sel' : ''}" aria-selected="${r.ordem === sel}"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
+          <td>${fmtInt(r.volume)}</td>${tdVar(varRecebidas(r, ant), '%')}<td><span class="pill ${r.status}">${fmtPct(r.ns)}</span></td>${tdVar(varNs(r, ant), '')}</tr>`; }).join('')}</tbody></table></div>
+        <div class="small muted" style="margin-top:6px">VAR. = variação de chamadas recebidas (%) · VAR. NS = variação do NS (p.p.), sempre contra ${t === 'DIA' ? 'o dia anterior' : t === 'SEMANA' ? 'a semana anterior' : 'o mês anterior'}.${t === 'DIA' ? '' : ` ${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; a variação de chamadas só aparece com o período fechado.`}</div></div>`;
   }
 
   // ---------------- Gráficos (SVG) ----------------
@@ -497,7 +503,7 @@
   const largura = bw => Math.max(8, Math.min(28, bw * 0.56));
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = 220, L = 30, R = 8, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = 220, L = 22, R = 6, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
     const meta = items[items.length - 1].meta || 0.8;
     const vals = items.map(d => d.ns ?? 0);
     const lo = Math.max(0, Math.floor((Math.min(...vals, meta) - 0.05) * 10) / 10), hi = 1;
@@ -505,7 +511,7 @@
     const bw = iw / items.length;
     const w = largura(bw);
     let g = '';
-    for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(v * 100)}</text>`;
+    for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 3}" y="${y(v) + 3}" font-size="7.5" text-anchor="end" fill="${css('--ink3')}">${Math.round(v * 100)}</text>`;
     const bars = items.map((d, i) => {
       const x = L + i * bw + (bw - w) / 2, yt = y(d.ns ?? lo), yb = y(lo);
       return `<g${opac(d)}>${barra(x, yt, w, yb, corStatus(d.status))}${!d.completo ? barra(x, yt, w, yb, 'url(#hatch)') : ''}</g>`;
@@ -518,30 +524,60 @@
       ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
       ${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
-  // Volume / atendidas / ≤5min: barras sobrepostas, todas com a mesma largura; só o volume (total) tem rótulo
+  // Chamadas recebidas (barras, eixo esquerdo) + NS 5 min (linha com marcadores, eixo direito, sem rótulos)
   function chartVol(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = 226, L = 38, R = 8, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = 226, L = 26, R = 24, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
     const k = d => mensal ? 1 / (d.dias || 1) : 1;
     const max = Math.max(...items.map(d => d.volume * k(d))) * 1.02 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
+    // eixo direito do NS: mesma faixa usada no gráfico de NS
+    const meta = items[items.length - 1].meta || 0.8;
+    const lo = Math.max(0, Math.floor((Math.min(...items.map(d => d.ns ?? 1), meta) - 0.05) * 10) / 10), hi = 1;
+    const yn = v => T + ih - (v - lo) / (hi - lo) * ih;
     const bw = iw / items.length;
-    const w = largura(bw); // mesma largura para volume, atendidas e ≤5 min (sobrepostas)
+    const w = largura(bw);
     const largo = bw >= 40;
     const fs = bw >= 34 ? 9.5 : bw >= 24 ? 8.5 : 7.5;
     let g = '';
-    for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
+    for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 3}" y="${y(v) + 3}" font-size="7.5" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
+    for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<text class="axr" x="${W - R + 3}" y="${yn(v) + 3}" font-size="7.5" text-anchor="start" fill="${css('--laranjaL')}">${Math.round(v * 100)}%</text>`;
     const bars = items.map((d, i) => {
-      const x0 = L + i * bw + (bw - w) / 2, f = k(d), yb = y(0);
-      return `<g class="grp"${opac(d)}>${barra(x0, y(d.volume * f), w, yb, css('--bar1'), 'class="b-vol"')}${barra(x0, y(d.total * f), w, yb, css('--bar2'), 'class="b-at"')}${barra(x0, y(d.ate * f), w, yb, css('--bar3'), 'class="b-5"')}</g>`;
+      const x0 = L + i * bw + (bw - w) / 2, f = k(d), yb = y(0), yt = y(d.volume * f);
+      return `<g class="grp"${opac(d)}>${barra(x0, yt, w, yb, css('--barR'), 'class="b-vol"')}${!d.completo ? barra(x0, yt, w, yb, 'url(#hatchV)') : ''}</g>`;
     }).join('');
     const labs = items.map((d, i) => {
-      const s = d.ordem === sel, f = k(d);
-      return `<text class="vlab" x="${L + i * bw + bw / 2}" y="${(y(d.volume * f) - 5).toFixed(1)}" font-size="${s ? fs + .5 : fs}" font-weight="700" text-anchor="middle" fill="${s ? css('--selink') : css('--ink2')}" ${halo()}${opac(d)}>${numCurto(d.volume * f, largo)}</text>`;
+      const s2 = d.ordem === sel, f = k(d);
+      return `<text class="vlab" x="${L + i * bw + bw / 2}" y="${(y(d.volume * f) - 5).toFixed(1)}" font-size="${s2 ? fs + .5 : fs}" font-weight="700" text-anchor="middle" fill="${s2 ? css('--selink') : css('--ink2')}" ${halo()}${opac(d)}>${numCurto(d.volume * f, largo)}</text>`;
     }).join('');
+    const pts = items.map((d, i) => d.ns == null ? null : [L + i * bw + bw / 2, yn(d.ns), d]).filter(Boolean);
+    const linha = pts.length ? `<path class="nsline" d="${curvaSuave(pts)}" fill="none" stroke="${css('--laranjaL')}" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round" opacity="${sel ? .65 : 1}"/>
+      ${pts.map(p => `<circle class="nsmk" cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${p[2].ordem === sel ? 5 : 3.6}" fill="${css('--card')}" stroke="${css('--laranjaL')}" stroke-width="2.2"${opac(p[2])}/>`).join('')}` : '';
     const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${faixaSel(items, L, bw, T, ih + B)}${g}${bars}${labs}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Chamadas recebidas e NS">
+      <defs><pattern id="hatchV" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".5"/></pattern></defs>
+      ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}${labs}${linha}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+  }
+  // curva suave monotônica (Fritsch–Carlson): passa pelos pontos sem "estourar" acima/abaixo deles
+  function curvaSuave(pts) {
+    const n = pts.length;
+    if (n < 3) return pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+    const dx = [], m = [], t = new Array(n);
+    for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0]; m[i] = (pts[i + 1][1] - pts[i][1]) / dx[i]; }
+    t[0] = m[0]; t[n - 1] = m[n - 2];
+    for (let i = 1; i < n - 1; i++) t[i] = m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2;
+    for (let i = 0; i < n - 1; i++) {
+      if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+      const a = t[i] / m[i], b = t[i + 1] / m[i], h = a * a + b * b;
+      if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+    }
+    let d = `M${pts[0][0].toFixed(1)},${pts[0][1].toFixed(1)}`;
+    for (let i = 0; i < n - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], h3 = dx[i] / 3;
+      d += ` C${(x0 + h3).toFixed(1)},${(y0 + t[i] * h3).toFixed(1)} ${(x1 - h3).toFixed(1)},${(y1 - t[i + 1] * h3).toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
+    }
+    return d;
   }
   function bindTaps(items) {
     ['#ch1', '#ch2'].forEach(s => {
@@ -582,8 +618,8 @@
   const ppTxt = v => (v === 0 ? '' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1).replace('.', ',') + ' p.p.';
 
   // Mensagem no formato sugerido pela gerência, ampliado com mês, semana e dia.
-  // Número = TOTAL_ATENDIDAS do período (total, sem média: o peso de cada dia da semana é muito
-  // diferente — domingo baixo, segunda pico). NS em negrito. * = período parcial.
+  // Número = chamadas recebidas (VOLUME) do período, total, sem média. Atendidas não são exibidas
+  // (parte das chamadas vai para a parceira e conta como abandonada). NS em negrito. * = parcial.
   const MES_ABR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const MES_EXT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const Cap = t => t.charAt(0).toUpperCase() + t.slice(1);
@@ -600,7 +636,7 @@
     const all = [...periodos().values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
     const por = t => all.filter(r => r.tipo === t && r.ns != null);
     const meses = por('MES').slice(-LIMITE.MES), semanas = por('SEMANA').slice(-LIMITE.SEMANA), dias = por('DIA').slice(-LIMITE.DIA);
-    const linha = r => ({ lab: rotuloMsg(r), num: fmtInt(r.total), ns: pct1(r.ns), status: r.status });
+    const linha = r => ({ lab: rotuloMsg(r), num: fmtInt(r.volume), ns: pct1(r.ns), status: r.status });
     const blocos = [];
     if (meses.length) blocos.push({ titulo: 'Mensal', col: 'Mês', linhas: meses.map(linha) });
     if (semanas.length) blocos.push({ titulo: 'Semanal', col: 'Semana', linhas: semanas.map(linha) });
@@ -612,7 +648,7 @@
   }
   function textoCompartilhar() {
     const c = conteudoMsg();
-    const L = ['📊 *Atendidas x NS (5 min)*'];
+    const L = ['📊 *Chamadas recebidas x NS (5 min)*'];
     for (const b of c.blocos) {
       const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
       L.push('', `*${b.titulo}*`, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | *${x.ns}*`));
@@ -629,9 +665,9 @@
     const thR = 'style="text-align:right;padding:4px 12px 4px 0;border-bottom:1px solid #D5BFE7;color:#642A90"';
     const td = 'style="padding:3px 12px 3px 0"', tdR = 'style="text-align:right;padding:3px 12px 3px 0"';
     let h = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">';
-    h += '<p>📊 <b>Atendidas x NS (5 min)</b></p>';
+    h += '<p>📊 <b>Chamadas recebidas x NS (5 min)</b></p>';
     for (const b of c.blocos) {
-      h += `<p><b>${esc(b.titulo)}</b></p><table style="border-collapse:collapse"><thead><tr><th ${th}>${esc(b.col)}</th><th ${thR}>Atendidas</th><th ${thR}>NS 5 min</th></tr></thead><tbody>`;
+      h += `<p><b>${esc(b.titulo)}</b></p><table style="border-collapse:collapse"><thead><tr><th ${th}>${esc(b.col)}</th><th ${thR}>Chamadas recebidas</th><th ${thR}>NS 5 min</th></tr></thead><tbody>`;
       for (const x of b.linhas) h += `<tr><td ${td}>${esc(x.lab)}</td><td ${tdR}>${esc(x.num)}</td><td ${tdR}><b style="color:${COR_TEAMS[x.status] || '#1F1530'}">${esc(x.ns)}</b></td></tr>`;
       h += '</tbody></table>';
     }
@@ -642,7 +678,7 @@
   // versão em texto simples (para quem colar onde não há formatação)
   function textoSimples() {
     const c = conteudoMsg();
-    const L = ['📊 Atendidas x NS (5 min)'];
+    const L = ['📊 Chamadas recebidas x NS (5 min)'];
     for (const b of c.blocos) {
       const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
       L.push('', b.titulo, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | ${x.ns}`));
@@ -717,7 +753,7 @@
   ${T(640, 300, 30, d.prev ? `vs ${P.rotulo(d.prev)}` : 'vs dia anterior', { f: PAL.ink2 })}
   ${T(636, 384, 66, d.dPP == null ? '—' : ppTxt(d.dPP), { w: 800, f: dCor })}
   ${T(640, 430, 27, d.prev ? `NS ${pct1(d.prev.ns)}` : '', { f: PAL.ink3 })}
-  ${T(640, 481, 27, `${fmtInt(c.ate)} de ${fmtInt(c.total)} em até 5 min`, { f: PAL.ink2 })}
+  ${T(640, 481, 27, `${fmtInt(c.volume)} chamadas recebidas`, { f: PAL.ink2 })}
   <rect x="48" y="572" width="984" height="652" rx="28" fill="${PAL.card}" stroke="${PAL.line}" stroke-width="2"/>
   ${T(92, 636, 32, `NS por dia · últimos ${it.length} dias`, { w: 800, f: PAL.p700 })}
   ${band}${g}${bars}${meta}${vals.join('')}${xl}${leg}
@@ -833,8 +869,8 @@
     const bg = document.createElement('div'); bg.className = 'sheet-bg';
     bg.innerHTML = `<div class="sheet"><h3>Dados até ${fmtData(s.dataRef)}</h3>
       <div class="small muted">${esc(s.arquivo)} · ${s.origem} · recebido ${fmtDT(s.id)}${s.mudancasAceitas && s.mudancasAceitas.length ? ` · ${s.mudancasAceitas.length} alteração(ões) em período fechado confirmada(s)` : ''}</div>
-      <table class="conf" style="cursor:default;margin-top:8px"><thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
-      ${s.rows.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, r.tipo === 'SEMANA'))}</td><td>${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td><td>${r.volume}</td><td>${r.total}</td><td>${r.ate}</td><td>${fmtNs(r.ns)}</td></tr>`).join('')}
+      <table class="conf" style="cursor:default;margin-top:8px"><thead><tr><th>PERÍODO</th><th>DIAS</th><th>RECEBIDAS</th><th>NS</th></tr></thead><tbody>
+      ${s.rows.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, r.tipo === 'SEMANA'))}</td><td>${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td><td>${fmtInt(r.volume)}</td><td>${fmtPct(r.total > 0 ? r.ate / r.total : null)}</td></tr>`).join('')}
       </tbody></table>
       <div class="row" style="margin-top:12px"><button class="btn sec" id="cClose">Fechar</button><button class="btn danger" id="cDel">Excluir</button></div></div>`;
     document.body.appendChild(bg);
