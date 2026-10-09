@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>NS Leitor</title>
+<meta name="theme-color" content="#0f172a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+:root{
+  --bg:#f4f5f7; --card:#fff; --ink:#0f172a; --ink2:#475569; --ink3:#94a3b8; --line:#e2e8f0;
+  --brand:#0f172a; --accent:#2563eb;
+  --ok:#16a34a; --okbg:#dcfce7; --warn:#b45309; --warnbg:#fef3c7; --bad:#dc2626; --badbg:#fee2e2;
+  --calc:#1d4ed8; --calcbg:#dbeafe; --user:#7c3aed; --userbg:#ede9fe;
+  --verde:#16a34a; --amarelo:#e0a100; --vermelho:#dc2626;
+  --bar1:#cbd5e1; --bar2:#64748b; --bar3:#0f172a;
+  --r:14px; --sh:0 1px 2px rgba(15,23,42,.06),0 4px 16px rgba(15,23,42,.05);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0b1020; --card:#131a2e; --ink:#e5e7eb; --ink2:#a3adc2; --ink3:#64708a; --line:#232c45;
+    --okbg:#0f2e1c; --warnbg:#33260a; --badbg:#3a1414; --calcbg:#13234a; --userbg:#251a45;
+    --bar1:#334155; --bar2:#64748b; --bar3:#e2e8f0; --sh:none; --brand:#020617; --amarelo:#f5b700; }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--brand);color:#fff;padding:calc(10px + env(safe-area-inset-top,0px)) 16px 10px;display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px;flex:1}
+header .ver{font-size:11px;opacity:.6}
+main{padding:12px 12px calc(84px + var(--safe-b));max-width:760px;margin:0 auto}
+nav{position:fixed;bottom:0;left:0;right:0;z-index:6;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:var(--safe-b)}
+nav button{flex:1;border:0;background:none;color:var(--ink3);padding:10px 4px 12px;font:600 12px system-ui;display:flex;flex-direction:column;align-items:center;gap:3px}
+nav button svg{width:22px;height:22px}
+nav button.on{color:var(--accent)}
+.card{background:var(--card);border-radius:var(--r);box-shadow:var(--sh);padding:14px;margin-bottom:12px;border:1px solid var(--line)}
+.card h2{font-size:14px;margin:0 0 10px;color:var(--ink2);font-weight:650;text-transform:uppercase;letter-spacing:.4px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:12px;padding:13px 16px;font:650 15px system-ui;background:var(--accent);color:#fff;width:100%;cursor:pointer}
+.btn.sec{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn.danger{background:var(--bad)}
+.btn:disabled{opacity:.45}
+.row{display:flex;gap:10px}
+.row>*{flex:1}
+.muted{color:var(--ink2)} .small{font-size:12.5px}
+.kpis{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;box-shadow:var(--sh)}
+.kpi .l{font-size:12px;color:var(--ink2)} .kpi .v{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .s{font-size:12px;color:var(--ink3);margin-top:2px}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11.5px;font-weight:650}
+.pill.VERDE{background:var(--okbg);color:var(--ok)} .pill.AMARELO{background:var(--warnbg);color:var(--warn)} .pill.VERMELHO{background:var(--badbg);color:var(--bad)}
+select{font:inherit;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.chart svg{width:100%;height:auto;display:block;touch-action:manipulation}
+.chart .cap{font-size:12.5px;color:var(--ink2);min-height:18px;margin-top:6px;font-variant-numeric:tabular-nums}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--ink2);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+/* conferência */
+table.conf{width:100%;border-collapse:separate;border-spacing:0 4px;font-variant-numeric:tabular-nums;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:13.5px}
+table.conf th{font:600 11px system-ui;color:var(--ink2);text-align:right;padding:0 6px}
+table.conf th:first-child{text-align:left}
+table.conf td{padding:8px 6px;text-align:right;background:var(--card);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+table.conf td:first-child{text-align:left;border-left:1px solid var(--line);border-radius:9px 0 0 9px;font-weight:650}
+table.conf td:last-child{border-right:1px solid var(--line);border-radius:0 9px 9px 0}
+table.conf tr{cursor:pointer}
+td.f-ok{box-shadow:inset 0 -3px 0 var(--ok)}
+td.f-derivado{background:var(--calcbg)!important;color:var(--calc)}
+td.f-lido{box-shadow:inset 0 -3px 0 var(--ink3)}
+td.f-conferir{background:var(--warnbg)!important;color:var(--warn);font-weight:700}
+td.f-faltando{background:var(--badbg)!important;color:var(--bad);font-weight:700}
+td.f-user{background:var(--userbg)!important;color:var(--user)}
+.legend2{display:flex;flex-wrap:wrap;gap:6px 12px;font-size:12px;color:var(--ink2);margin:6px 0 2px}
+.legend2 span{display:inline-flex;align-items:center;gap:5px}
+.sw{width:14px;height:14px;border-radius:4px;display:inline-block;border:1px solid var(--line)}
+.banner{border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:13.5px}
+.banner.warn{background:var(--warnbg);color:var(--warn)} .banner.bad{background:var(--badbg);color:var(--bad)} .banner.ok{background:var(--okbg);color:var(--ok)} .banner.info{background:var(--calcbg);color:var(--calc)}
+.thumb{width:100%;border-radius:10px;border:1px solid var(--line);display:block}
+.prog{height:8px;background:var(--line);border-radius:9px;overflow:hidden;margin:12px 0 8px}
+.prog>div{height:100%;width:0;background:var(--accent);transition:width .25s}
+/* folha inferior */
+.sheet-bg{position:fixed;inset:0;background:rgba(2,6,23,.5);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--card);width:100%;max-width:760px;border-radius:18px 18px 0 0;padding:16px 16px calc(16px + var(--safe-b));max-height:92vh;overflow:auto}
+.sheet h3{margin:0 0 4px;font-size:17px}
+.field{margin:12px 0}
+.field label{display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink2);margin-bottom:4px}
+.field input{width:100%;font:600 20px ui-monospace,Menlo,Consolas,monospace;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.field input.f-conferir{border-color:var(--warn);background:var(--warnbg)} .field input.f-faltando{border-color:var(--bad);background:var(--badbg)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(90px + var(--safe-b));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;z-index:30;font-weight:600;max-width:90vw;text-align:center}
+.list .it{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.list .it:last-child{border-bottom:0}
+.list .it img{width:64px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--line)}
+.list .it .t{flex:1;min-width:0}
+.badge{font-size:11px;padding:1px 6px;border-radius:6px;background:var(--userbg);color:var(--user);margin-left:6px}
+.empty{text-align:center;padding:26px 8px;color:var(--ink2)}
+.zoom{position:fixed;inset:0;background:#000;z-index:40;overflow:auto}
+.zoom img{width:220%;max-width:none;display:block}
+.zoom button{position:fixed;top:calc(10px + env(safe-area-inset-top,0px));right:10px;z-index:41;width:auto}
+ol.tips{margin:6px 0 0;padding-left:20px;color:var(--ink2);font-size:13.5px}
+ol.tips li{margin:3px 0}
+</style>
+</head>
+<body>
+<header><h1>NS Leitor · B2C Suporte</h1><span class="ver" id="ver"></span></header>
+<main id="main"></main>
+<nav id="nav">
+  <button data-v="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Painel</button>
+  <button data-v="captura"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Capturar</button>
+  <button data-v="historico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>Histórico</button>
+</nav>
+<input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+<input type="file" id="fileGal" accept="image/*" hidden>
+<input type="file" id="fileImp" accept="application/json,.json" hidden>
+<script src="vendor/tesseract.min.js"></script>
+<script src="engine.js"></script>
+<script src="ocr-adapter.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
