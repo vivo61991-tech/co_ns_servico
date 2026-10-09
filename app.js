@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.7.0';
+  const APP_VERSION = '2.7.1';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -575,18 +575,20 @@
   const pct1 = v => (v * 100).toFixed(1).replace('.', ',') + '%';
   const ppTxt = v => (v === 0 ? '' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1).replace('.', ',') + ' p.p.';
 
+  const SEMANA_EXT = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+  // No WhatsApp, *texto* fica em negrito: rótulo em negrito, valor normal
   function textoCompartilhar(d) {
     const c = d.cur;
-    const linha2 = `NS do dia: *${pct1(c.ns)}* · ${stNome(c.status)}` + (d.dPP == null ? '' : ` · ${ppTxt(d.dPP)} vs ${ddmm(d.prev)}`);
-    return [
-      `*NS 5 min · B2C Suporte* — ${ddmm(c)} (${SEMANA_MIN[d.wd(c)]})`,
-      linha2,
+    const linhas = [
+      '*NS 5 min - B2C Suporte*',
       '',
-      FRASE.replace('{meta}', pct1(d.meta).replace(',0%', '%')),
-      '',
-      'Toque no link para abrir o painel completo:',
-      APP_URL,
-    ].join('\n');
+      `*Data:* ${ddmm(c)} (${SEMANA_EXT[d.wd(c)]})`,
+      `*NS do dia:* ${pct1(c.ns)}`,
+      `*Status:* ${stNome(c.status)}`,
+    ];
+    if (d.dPP != null) linhas.push(`*Comparação com o dia anterior:* ${ppTxt(d.dPP)}`);
+    linhas.push('', FRASE.replace('{meta}', pct1(d.meta).replace(',0%', '%')), '', 'Toque no link para abrir o painel completo:', APP_URL);
+    return linhas.join('\n');
   }
 
   function svgCompartilhar(d) {
