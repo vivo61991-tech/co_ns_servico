@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.2.0';
+  const APP_VERSION = '2.3.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -382,12 +382,14 @@
         <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${s ? css('--selink') : d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo && !s ? 400 : 700}">${d.dias}d</text>`;
     }).join('');
   }
-  // barra fina com o topo arredondado (raio = metade da largura)
+  // barra com os cantos de cima levemente arredondados (raio 4)
+  const RAIO = 4;
   function barra(x, yTop, w, yBase, fill, extra = '') {
     const h = Math.max(0, yBase - yTop); if (h <= 0) return '';
-    const r = Math.min(w / 2, h);
-    return `<path d="M${x},${yBase} V${yTop + r} A${r},${r} 0 0 1 ${x + w},${yTop + r} V${yBase} Z" fill="${fill}" ${extra}/>`;
+    const r = Math.min(RAIO, w / 2, h);
+    return `<path d="M${x},${yBase} V${yTop + r} A${r},${r} 0 0 1 ${x + r},${yTop} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${yTop + r} V${yBase} Z" fill="${fill}" ${extra}/>`;
   }
+  const largura = bw => Math.max(8, Math.min(28, bw * 0.56));
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
     const W = 360, H = mensal ? 220 : 216, L = 30, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
@@ -396,7 +398,7 @@
     const lo = Math.max(0, Math.floor((Math.min(...vals, meta) - 0.05) * 10) / 10), hi = 1;
     const y = v => T + ih - (v - lo) / (hi - lo) * ih;
     const bw = iw / items.length;
-    const w = Math.max(6, Math.min(16, bw * 0.38));   // barras finas
+    const w = largura(bw);
     let g = '';
     for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(v * 100)}</text>`;
     const bars = items.map((d, i) => {
@@ -411,7 +413,7 @@
       ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
       ${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
-  // Volume / atendidas / ≤5min: três barras finas lado a lado, mesma largura; só o volume (total) tem rótulo
+  // Volume / atendidas / ≤5min: barras sobrepostas, todas com a mesma largura; só o volume (total) tem rótulo
   function chartVol(items, t) {
     const mensal = t !== 'DIA';
     const W = 360, H = mensal ? 226 : 216, L = 38, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
@@ -420,16 +422,14 @@
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
     const bw = iw / items.length;
-    const esp = Math.max(1.5, Math.min(3, bw * 0.05));               // espaço entre as 3 barras
-    const w = Math.max(3, Math.min(9, (bw * 0.72 - 2 * esp) / 3));   // largura de cada barra
-    const gw = 3 * w + 2 * esp;
+    const w = largura(bw); // mesma largura para volume, atendidas e ≤5 min (sobrepostas)
     const largo = bw >= 40;
     const fs = bw >= 34 ? 9.5 : bw >= 24 ? 8.5 : 7.5;
     let g = '';
     for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
     const bars = items.map((d, i) => {
-      const x0 = L + i * bw + (bw - gw) / 2, f = k(d), yb = y(0);
-      return `<g class="grp"${opac(d)}>${barra(x0, y(d.volume * f), w, yb, css('--bar1'), 'class="b-vol"')}${barra(x0 + w + esp, y(d.total * f), w, yb, css('--bar2'), 'class="b-at"')}${barra(x0 + 2 * (w + esp), y(d.ate * f), w, yb, css('--bar3'), 'class="b-5"')}</g>`;
+      const x0 = L + i * bw + (bw - w) / 2, f = k(d), yb = y(0);
+      return `<g class="grp"${opac(d)}>${barra(x0, y(d.volume * f), w, yb, css('--bar1'), 'class="b-vol"')}${barra(x0, y(d.total * f), w, yb, css('--bar2'), 'class="b-at"')}${barra(x0, y(d.ate * f), w, yb, css('--bar3'), 'class="b-5"')}</g>`;
     }).join('');
     const labs = items.map((d, i) => {
       const s = d.ordem === sel, f = k(d);
