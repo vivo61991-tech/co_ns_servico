@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>NS Leitor</title>
+<title>NS Painel</title>
 <meta name="theme-color" content="#642A90">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.webmanifest">
@@ -124,22 +125,42 @@ td.dim{color:var(--ink3)}
 .legend i.ln.dash{border-top:2px dashed var(--ink2)}
 .card h2{color:var(--p700)}
 @media (prefers-color-scheme: dark){.card h2{color:#c9a6ec}}
+
+.seg button{padding:9px 14px;min-width:0;flex:1}
+.seg{display:flex;width:100%}
+.topbar{flex-direction:column;align-items:stretch}
+.topbar .meta-line{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;color:var(--ink2)}
+.list-msg{margin:6px 0 0;padding-left:0;list-style:none;font-size:13px}
+.list-msg li{padding:6px 8px;border-radius:8px;margin:4px 0}
+.list-msg.err li{background:var(--badbg);color:var(--bad)}
+.list-msg.warn li{background:var(--warnbg);color:var(--warn)}
+.list-msg.info li{background:var(--okbg);color:var(--ok)}
+.list-msg b{font-variant-numeric:tabular-nums}
+textarea{width:100%;min-height:150px;font:12.5px ui-monospace,Menlo,Consolas,monospace;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);white-space:pre;overflow:auto}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.chip{font-size:12px;padding:3px 9px;border-radius:99px;background:var(--p50);color:var(--p700);border:1px solid var(--p200);font-weight:600}
+@media (prefers-color-scheme: dark){.chip{background:#2a1c3d;color:#d3b5f0;border-color:#4a3466}}
+.origem{font-size:11px;padding:1px 7px;border-radius:6px;font-weight:700}
+.origem.publicado{background:var(--calcbg);color:var(--calc)} .origem.importado{background:var(--userbg);color:var(--user)}
+label.chk{display:flex;gap:10px;align-items:flex-start;font-size:14px;margin:10px 0;padding:10px;border-radius:10px;background:var(--warnbg);color:var(--warn)}
+label.chk input{width:20px;height:20px;margin-top:1px;accent-color:var(--p700)}
+h3.sub{font-size:13px;margin:14px 0 4px;color:var(--ink2);text-transform:uppercase;letter-spacing:.4px}
+code{font:12.5px ui-monospace,Menlo,Consolas,monospace;background:var(--p50);padding:1px 5px;border-radius:5px}
+@media (prefers-color-scheme: dark){code{background:#2a1c3d}}
+@media (max-width:375px){table.conf{font-size:12px;letter-spacing:-.3px}table.conf td{padding:8px 3px}table.conf th{padding:0 3px;font-size:10px}table.conf .pill{padding:2px 5px}}
 </style>
 </head>
 <body>
-<header><h1>NS Leitor · B2C Suporte</h1><span class="ver" id="ver"></span></header>
+<header><h1>NS Painel · B2C Suporte</h1><span class="ver" id="ver"></span></header>
 <main id="main"></main>
 <nav id="nav">
   <button data-v="painel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Painel</button>
-  <button data-v="captura"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>Capturar</button>
+  <button data-v="dados"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>Dados</button>
   <button data-v="historico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>Histórico</button>
 </nav>
-<input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
-<input type="file" id="fileGal" accept="image/*" hidden>
+<input type="file" id="fileTxt" accept=".txt,.tsv,.csv,.json,text/plain,text/tab-separated-values,text/csv,application/json" hidden>
 <input type="file" id="fileImp" accept="application/json,.json" hidden>
-<script src="vendor/tesseract.min.js"></script>
-<script src="engine.js"></script>
-<script src="ocr-adapter.js"></script>
+<script src="parser.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

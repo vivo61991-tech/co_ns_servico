@@ -1,7 +1,7 @@
 {
-  "name": "NS Leitor · B2C Suporte",
-  "short_name": "NS Leitor",
-  "description": "Lê a tabela de NS do Oracle SQL Developer pela câmera e gera gráficos.",
+  "name": "NS Painel · B2C Suporte",
+  "short_name": "NS Painel",
+  "description": "Painel de nível de serviço (NS 5 min) do B2C Suporte por dia, semana e mês.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

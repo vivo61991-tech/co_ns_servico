@@ -1,14 +1,14 @@
-/* NS Leitor — app */
+/* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '1.1.0';
-  const E = window.NSEngine;
+  const APP_VERSION = '2.0.0';
+  const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
   $('#ver').textContent = 'v' + APP_VERSION;
 
   // ---------------- Banco (IndexedDB) ----------------
-  const DB_NAME = 'ns-leitor', STORE = 'capturas';
+  const DB_NAME = 'ns-painel', STORE = 'snapshots';
   let dbp = null;
   function db() {
     if (dbp) return dbp;
@@ -37,44 +37,49 @@
   const dbPut = obj => tx('readwrite', st => st.put(obj));
   const dbDel = id => tx('readwrite', st => st.delete(id));
 
-  // ---------------- Estado ----------------
-  let caps = [];          // capturas salvas (mais nova primeiro)
-  let view = 'painel';
-  let draft = null;       // leitura aguardando conferência
-  let busy = false;
-
-  async function reload() {
-    caps = (await dbAll()).sort((a, b) => b.id - a.id);
+  // grava e confere lendo de volta — erro de gravação nunca passa em silêncio
+  async function salvarSnapshot(snap) {
+    await dbPut(snap);
+    const back = await dbGet(snap.id);
+    if (!back || JSON.stringify(back.rows) !== JSON.stringify(snap.rows)) throw new Error('A conferência depois de gravar não bateu.');
   }
 
-  // valor vigente de cada período = o da captura mais recente que o contém
+  // ---------------- Estado ----------------
+  let snaps = [];          // mais recente (pelos dados) primeiro
+  let view = 'painel';
+  let preview = null;      // importação aguardando confirmação
+  let pubStatus = null;    // situação do data.txt publicado
+  let modo = (() => { try { const m = localStorage.getItem('ns-modo'); return ['DIA', 'SEMANA', 'MES'].includes(m) ? m : 'DIA'; } catch (e) { return 'DIA'; } })();
+
+  async function reload() {
+    snaps = (await dbAll()).sort((a, b) => (b.dataRef || '').localeCompare(a.dataRef || '') || b.id - a.id);
+  }
+  // valor vigente de cada período = o do arquivo com dados mais recentes que o contém
   function periodos() {
     const map = new Map();
-    for (const c of caps) for (const r of c.rows) if (r.ordem && !map.has(r.ordem)) map.set(r.ordem, { ...r, capId: c.id, em: c.id });
+    for (const s of snaps) for (const r of s.rows) if (!map.has(r.ordem)) map.set(r.ordem, r);
     return map;
   }
 
   // ---------------- Utilidades ----------------
-  const fmtInt = v => v == null ? '—' : v.toLocaleString('pt-BR');
+  const fmtInt = v => v == null ? '—' : Math.round(v).toLocaleString('pt-BR');
   const fmtNs = v => v == null ? '—' : String(+v.toFixed(4)).replace('.', ',');
   const fmtPct = v => v == null ? '—' : (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
-  const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
-  const ymLabel = ym => MESES[+ym.slice(4, 6) - 1] + '/' + ym.slice(2, 4);
   const fmtDT = ts => new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const fmtData = isoD => isoD ? isoD.slice(8, 10) + '/' + isoD.slice(5, 7) + '/' + isoD.slice(2, 4) : '—';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const statusOf = (ns, meta) => ns == null ? null : ns >= meta ? 'VERDE' : ns >= 0.7 ? 'AMARELO' : 'VERMELHO';
+  const NOME = { DIA: 'Dia', SEMANA: 'Semana', MES: 'Mês' };
   function toast(msg, ms = 2600) {
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
     setTimeout(() => t.remove(), ms);
   }
-  function confirmDlg(msg) { return Promise.resolve(window.confirm(msg)); }
 
   // ---------------- Navegação ----------------
   $('#nav').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b || busy) return;
-    if (draft && b.dataset.v !== 'captura') {
-      if (!window.confirm('Há uma leitura não salva. Sair e descartar?')) return;
-      draft = null;
+    const b = e.target.closest('button'); if (!b) return;
+    if (preview && b.dataset.v !== 'dados') {
+      if (!window.confirm('Há uma importação não salva. Sair e descartar?')) return;
+      preview = null;
     }
     go(b.dataset.v);
   });
@@ -85,546 +90,374 @@
   }
   function render() {
     if (view === 'painel') renderPainel();
-    else if (view === 'captura') draft ? renderConf() : renderCaptura();
+    else if (view === 'dados') preview ? renderPreview() : renderDados();
     else renderHist();
   }
 
-  // ---------------- Captura ----------------
-  function renderCaptura() {
-    main.innerHTML = `
-      <div class="card">
-        <h2>Ler a tabela</h2>
-        <div class="row" style="flex-direction:column;gap:10px">
-          <button class="btn" id="bCam">📷 Fotografar a tela</button>
-          <button class="btn sec" id="bGal">Escolher imagem da galeria</button>
-        </div>
-        <ol class="tips">
-          <li>Enquadre <b>do cabeçalho</b> (PERIODO … ORDEM) <b>até a última linha</b>.</li>
-          <li>Chegue perto: a tabela deve ocupar quase toda a foto, de lado (paisagem).</li>
-          <li>Foto reta e parada; evite reflexo de luz na tela.</li>
-        </ol>
-        <div class="small muted" id="ocrState" style="margin-top:10px"></div>
-      </div>`;
-    $('#bCam').onclick = () => $('#fileCam').click();
-    $('#bGal').onclick = () => $('#fileGal').click();
-    warmup();
+  // ---------------- data.txt publicado (GitHub Pages) ----------------
+  async function buscarPublicado(manual) {
+    if (location.protocol === 'file:') return;
+    try { await buscarPublicado2(manual); }
+    finally { if (view === 'dados' && !preview) renderDados(); }
   }
-  let warmed = false;
-  function warmup() {
-    if (warmed) return;
-    const st = $('#ocrState'); if (st) st.textContent = 'Preparando o leitor… (na 1ª vez baixa ~7 MB)';
-    window.NSOcr.warmup().then(() => { warmed = true; const s = $('#ocrState'); if (s) s.textContent = 'Leitor pronto ✓ (funciona offline)'; })
-      .catch(e => { const s = $('#ocrState'); if (s) s.textContent = 'Não consegui preparar o leitor: ' + e.message; });
-  }
-  ['#fileCam', '#fileGal'].forEach(id => $(id).addEventListener('change', e => {
-    const f = e.target.files && e.target.files[0]; e.target.value = '';
-    if (f) processFile(f);
-  }));
-
-  async function processFile(file) {
-    busy = true;
-    main.innerHTML = `<div class="card"><h2>Lendo a tabela</h2>
-      <div id="pmsg" class="muted">Abrindo a imagem…</div><div class="prog"><div id="pbar"></div></div>
-      <div class="small muted">Leva uns segundos. Pode deixar o celular parado.</div></div>`;
-    const setP = (msg, frac) => { const m = $('#pmsg'), b = $('#pbar'); if (m && msg) m.textContent = msg; if (b && frac != null) b.style.width = Math.round(frac * 100) + '%'; };
+  async function buscarPublicado2(manual) {
+    let res;
+    try { res = await fetch('data.txt', { cache: 'no-store' }); }
+    catch (e) { pubStatus = { estado: 'offline', em: Date.now() }; if (manual) toast('Sem conexão — usando os dados já salvos.'); return; }
+    if (res.status === 404) { pubStatus = { estado: 'ausente', em: Date.now() }; if (manual) toast('Não há data.txt publicado no site.'); return; }
+    if (!res.ok) { pubStatus = { estado: 'erro', msg: 'HTTP ' + res.status, em: Date.now() }; return; }
+    const { text } = P.decode(new Uint8Array(await res.arrayBuffer()));
+    const pr = P.parse(text);
+    const lm = res.headers.get('Last-Modified');
+    if (pr.erros.length) { pubStatus = { estado: 'invalido', erros: pr.erros, em: Date.now() }; if (view === 'painel') renderPainel(); return; }
+    const h = P.hash(text);
+    pubStatus = { estado: 'ok', hash: h, publicadoEm: lm ? Date.parse(lm) : null, dataRef: pr.dataRef, em: Date.now() };
+    if (snaps.some(s => s.hash === h)) { if (manual) toast('Os dados publicados já estão em dia.'); return; }
+    const snap = montarSnap(pr, h, 'publicado', 'data.txt', lm ? Date.parse(lm) : null);
     try {
-      const ad = await window.NSOcr.makeAdapter(file, () => setP('Preparando o leitor…', 0.02));
-      const res = await E.readTable(ad, { onProgress: p => setP(p.msg, p.frac) });
-      setP('Gerando miniatura…', 0.98);
-      const thumb = makeThumb(ad, res.quality);
-      draft = {
-        rows: res.rows, meta: res.meta, quality: res.quality, thumb,
-        user: {}, // "i:campo" -> true quando o usuário conferiu/editou
-        edited: 0,
-      };
-      busy = false;
-      go('captura');
-    } catch (err) {
-      busy = false;
-      console.warn('Leitura falhou:', err && err.message);
-      main.innerHTML = `<div class="card"><h2>Não deu certo</h2>
-        <div class="banner bad">${esc(err.message || err)}</div>
-        <button class="btn" id="bAgain">Tentar outra foto</button></div>`;
-      $('#bAgain').onclick = () => renderCaptura();
+      await salvarSnapshot(snap);
+      await reload();
+      toast('Dados atualizados: até ' + fmtData(pr.dataRef));
+      if (!preview) { if (view === 'dados' && snaps.length === 1) go('painel'); else if (view !== 'dados') render(); }
+    } catch (e) {
+      alert('ERRO AO GRAVAR os dados publicados — nada foi alterado.\n\n' + e.message);
     }
   }
-
-  function makeThumb(ad, q) {
-    try {
-      const b = ad.baseCanvas(q.rotation || 0);
-      const r = q.roi || { x: 0, y: 0, w: b.width, h: b.height };
-      const x = Math.max(0, r.x - r.w * 0.02), y = Math.max(0, r.y - r.h * 0.04);
-      const w = Math.min(b.width - x, r.w * 1.04), h = Math.min(b.height - y, r.h * 1.08);
-      const ow = Math.min(1600, Math.round(w)), oh = Math.round(h * ow / w);
-      const c = document.createElement('canvas'); c.width = ow; c.height = oh;
-      const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(b, x, y, w, h, 0, 0, ow, oh);
-      return c.toDataURL('image/jpeg', 0.72);
-    } catch (e) { return null; }
+  function montarSnap(pr, h, origem, arquivo, publicadoEm) {
+    return {
+      id: Date.now(), origem, arquivo, hash: h, formato: pr.formato, dataRef: pr.dataRef,
+      publicadoEm: publicadoEm || null, colunasExtras: pr.colunasExtras, avisos: pr.avisos.length, app: APP_VERSION,
+      rows: pr.rows.map(r => ({
+        ordem: r.ordem, tipo: r.tipo, periodo: r.periodo, inicio: r.inicio, fim: r.fim, dias: r.dias, diasPeriodo: r.diasPeriodo,
+        completo: r.completo, volume: r.volume, total: r.total, ate: r.ate, ns: r.ns, meta: r.meta, status: r.status, extras: r.extras,
+      })),
+    };
   }
 
-  // ---------------- Conferência ----------------
-  const FIELDS = ['volume', 'total', 'ate'];
-  function cellState(i, c) {
-    const r = draft.rows[i];
-    if (draft.user[i + ':' + c]) return 'user';
-    if (c === 'ns') return (r.total == null || r.ate == null) ? 'faltando' : (draft.user[i + ':total'] && draft.user[i + ':ate'] ? 'user' : r.flags.ns);
-    return r.flags[c] || 'conferir';
-  }
-  function conflicts() {
-    // meses fechados já salvos com valores diferentes
-    const per = periodos(), out = [];
-    draft.rows.forEach((r, i) => {
-      const old = r.ordem && per.get(r.ordem);
-      if (!old || r.tipo !== 'MES' || r.partial || old.partial) return;
-      for (const c of [...FIELDS, 'dias']) if (old[c] != null && r[c] != null && old[c] !== r[c] && !draft.user[i + ':' + c])
-        out.push({ i, c, old: old[c], now: r[c] });
-    });
-    return out;
-  }
-  function pendencias() {
-    const p = [];
-    draft.rows.forEach((r, i) => {
-      for (const c of FIELDS) { const s = cellState(i, c); if (s === 'conferir' || s === 'faltando') p.push({ i, c, s }); }
-      if (r.tipo === 'MES') { const sd = cellState(i, 'dias'); if (sd === 'conferir' || sd === 'faltando') p.push({ i, c: 'dias', s: sd }); }
-      const o = r.flags.ordem;
-      if ((o === 'conferir' || o === 'faltando') && !draft.user[i + ':ordem']) p.push({ i, c: 'ordem', s: o });
-    });
-    for (const k of conflicts()) if (!p.some(x => x.i === k.i && x.c === k.c)) p.push({ i: k.i, c: k.c, s: 'conferir', conflito: k });
-    return p;
-  }
-
-  function renderConf() {
-    const q = draft.quality, pend = pendencias(), conf = conflicts();
-    const nLido = draft.rows.reduce((s, r, i) => s + FIELDS.filter(c => cellState(i, c) === 'lido').length, 0);
-    const banners = [];
-    if (q.lowRes) banners.push(`<div class="banner warn">A tabela ficou pequena na foto (letra ≈ ${q.textPx}px). Para menos correções, chegue mais perto.</div>`);
-    if (conf.length) banners.push(`<div class="banner warn"><b>Diferente do já salvo:</b> ${conf.map(k => `${esc(draft.rows[k.i].label)} ${labelCampo(k.c)}: salvo ${k.old}, lido ${k.now}`).join(' · ')}</div>`);
-    if (draft.sumIssues && draft.sumIssues.length) banners.push(`<div class="banner bad"><b>A soma dos dias não fecha com o mês:</b> ${draft.sumIssues.map(k => `${labelCampo(k.col)} — dias somam ${k.soma}, mês mostra ${k.mes}`).join(' · ')}. Confira os valores.</div>`);
-    if (pend.length) banners.push(`<div class="banner warn"><b>${pend.length} ${pend.length === 1 ? 'item precisa' : 'itens precisam'} de conferência.</b> Toque na linha para corrigir ou confirmar olhando a tela.</div>`);
-    else banners.push(`<div class="banner ok"><b>Tudo conferido.</b> ${q.trusted} de ${q.cells} valores batem com os totais da própria tabela.</div>`);
-    const abertos = draft.rows.filter(r => r.tipo === 'MES' && r.partial);
-    if (abertos.length) banners.push(`<div class="banner info small">${abertos.map(r => `<b>${esc(r.label)}</b> é mês aberto: ${r.dias} de ${new Date(+r.ordem.slice(0, 4), +r.ordem.slice(4, 6), 0).getDate()} dias (QUANTIDADE_DIAS)`).join(' · ')}.</div>`);
-    if (nLido) banners.push(`<div class="banner info small">${nLido} valor(es) de meses fechados não têm conferência automática (a tabela não traz um total para comparar). Vale bater o olho.</div>`);
-
+  // ---------------- Dados (importação) ----------------
+  function renderDados() {
+    const ps = pubStatus;
+    const pubTxt = !ps ? 'Verificando…'
+      : ps.estado === 'ok' ? `Publicado: dados até <b>${fmtData(ps.dataRef)}</b>${ps.publicadoEm ? ` · enviado em ${fmtDT(ps.publicadoEm)}` : ''} ✓`
+      : ps.estado === 'ausente' ? 'Ainda não há <code>data.txt</code> publicado no site.'
+      : ps.estado === 'offline' ? 'Sem conexão agora — usando os dados salvos no aparelho.'
+      : ps.estado === 'invalido' ? `<span style="color:var(--bad)">O <code>data.txt</code> publicado tem ${ps.erros.length} erro(s) e foi ignorado.</span>`
+      : 'Não consegui verificar (' + esc(ps.msg) + ').';
     main.innerHTML = `
-      <div class="card">
-        <h2>Conferir leitura</h2>
-        ${banners.join('')}
-        ${draft.thumb ? `<img class="thumb" id="thumb" src="${draft.thumb}" alt="Foto da tabela"><div class="small muted" style="margin:4px 0 8px">Toque na foto para ampliar.</div>` : ''}
-        <div class="legend2">
-          <span><i class="sw" style="box-shadow:inset 0 -3px 0 var(--ok)"></i>conferido</span>
-          <span><i class="sw" style="background:var(--calcbg)"></i>calculado</span>
-          <span><i class="sw" style="box-shadow:inset 0 -3px 0 var(--ink3)"></i>lido (sem total p/ conferir)</span>
-          <span><i class="sw" style="background:var(--warnbg)"></i>conferir</span>
-          <span><i class="sw" style="background:var(--badbg)"></i>faltando</span>
-          <span><i class="sw" style="background:var(--userbg)"></i>você conferiu</span>
+      <div class="card"><h2>Importar TXT</h2>
+        <div class="small muted" style="margin-bottom:10px">Arquivo exportado do SQL Developer (colunas separadas por tabulação, com o cabeçalho na 1ª linha). Nada é salvo antes de você conferir.</div>
+        <div class="row" style="flex-direction:column;gap:10px">
+          <button class="btn" id="bArq">Escolher arquivo .txt</button>
+          <button class="btn sec" id="bColar">Colar o conteúdo</button>
         </div>
-        <div style="overflow-x:auto">
-        <table class="conf">
-          <thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead>
-          <tbody>${draft.rows.map((r, i) => {
-            const o = r.flags.ordem, oc = draft.user[i + ':ordem'] ? 'user' : (o === 'conferir' || o === 'faltando' ? o : 'ok');
-            const isConf = c => conf.some(k => k.i === i && k.c === c);
-            return `<tr data-i="${i}">
-              <td class="f-${oc}">${esc(r.label)}</td>
-              ${r.tipo === 'MES' ? `<td class="f-${isConf('dias') ? 'conferir' : cellState(i, 'dias')}">${r.dias ?? '?'}</td>` : '<td class="dim">1</td>'}
-              ${FIELDS.map(c => `<td class="f-${isConf(c) ? 'conferir' : cellState(i, c)}">${r[c] == null ? '?' : r[c]}</td>`).join('')}
-              <td class="f-${cellState(i, 'ns')}">${fmtNs(r.ns)}</td></tr>`;
-          }).join('')}</tbody>
-        </table></div>
-        <div class="small muted" style="margin-top:6px">Números no mesmo formato da tela do SQL Developer, para comparar fácil. ATEND. = TOTAL_ATENDIDAS · ≤5MIN = ATE_5_MIN · NS = ≤5MIN ÷ ATEND.</div>
+        <div id="colarBox" hidden style="margin-top:10px">
+          <textarea id="txtColar" placeholder="Cole aqui (com a linha do cabeçalho)" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea>
+          <button class="btn" id="bConferir" style="margin-top:8px">Conferir</button>
+        </div>
+      </div>
+      <div class="card"><h2>Dados publicados no site</h2>
+        <div class="small" id="pubTxt">${pubTxt}</div>
+        ${ps && ps.estado === 'invalido' ? `<ul class="list-msg err">${ps.erros.slice(0, 6).map(msgLi).join('')}</ul>` : ''}
+        <button class="btn sec" id="bPub" style="margin-top:10px">Verificar agora</button>
+        <div class="small muted" style="margin-top:10px">Para todos verem os dados novos: no repositório do GitHub, substitua o arquivo <code>data.txt</code> (mesmo nome, na mesma pasta do app). Quem abrir o app recebe os dados na hora; o arquivo é conferido do mesmo jeito que na importação.</div>
+      </div>`;
+    $('#bArq').onclick = () => $('#fileTxt').click();
+    $('#bColar').onclick = () => { $('#colarBox').hidden = false; $('#txtColar').focus(); };
+    $('#bConferir').onclick = () => { const t = $('#txtColar').value; if (!t.trim()) { toast('Cole o conteúdo primeiro.'); return; } abrirPrevia(t, 'texto colado', 'UTF-8'); };
+    $('#bPub').onclick = async () => { $('#pubTxt').textContent = 'Verificando…'; await buscarPublicado(true); renderDados(); };
+  }
+  $('#fileTxt').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+    try {
+      if (f.size > 5 * 1024 * 1024) throw new Error('Arquivo grande demais (máx. 5 MB).');
+      const { text, encoding } = P.decode(new Uint8Array(await f.arrayBuffer()));
+      abrirPrevia(text, f.name, encoding);
+    } catch (err) { alert('Não consegui abrir o arquivo: ' + err.message); }
+  });
+
+  function abrirPrevia(text, arquivo, encoding) {
+    const pr = P.parse(text);
+    const h = P.hash(text);
+    preview = { pr, hash: h, arquivo, encoding, mudancas: P.compara(pr.rows, periodos()), dup: snaps.find(s => s.hash === h) || null, aceito: false };
+    view = 'dados'; renderPreview(); window.scrollTo(0, 0);
+  }
+  const msgLi = m => `<li>${m.linha ? `<b>Linha ${m.linha}</b> · ` : ''}${m.col ? `<b>${esc(m.col)}</b>: ` : ''}${esc(m.msg)}</li>`;
+
+  function renderPreview() {
+    const { pr, mudancas, dup } = preview;
+    const bloqueia = pr.erros.length > 0 || !!dup || (mudancas.length > 0 && !preview.aceito);
+    const tabelaTipo = t => {
+      const rs = pr.rows.filter(r => r.tipo === t); if (!rs.length) return '';
+      return `<h3 class="sub">${NOME[t]} (${rs.length})</h3><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+        <thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
+        ${rs.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r))}</td><td class="${r.completo ? '' : 'dias-aberto'}">${r.tipo === 'DIA' ? '1' : r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>
+          <td>${r.volume}</td><td>${r.total}</td><td>${r.ate}</td><td><span class="pill ${r.status}">${fmtNs(r.ns)}</span></td></tr>`).join('')}
+        </tbody></table></div>`;
+    };
+    main.innerHTML = `
+      <div class="card"><h2>Conferir importação</h2>
+        <div class="small muted">${esc(preview.arquivo)} · ${esc(pr.formato || '?')}${preview.encoding ? ' · ' + preview.encoding : ''}</div>
+        ${pr.rows.length ? `<div class="chips"><span class="chip">${pr.resumo.MES} meses</span><span class="chip">${pr.resumo.SEMANA} semanas</span><span class="chip">${pr.resumo.DIA} dias</span><span class="chip">dados até ${fmtData(pr.dataRef)}</span></div>` : ''}
+        ${pr.erros.length ? `<div class="banner bad" style="margin-top:8px"><b>${pr.erros.length} erro(s) — corrija o arquivo e importe de novo.</b> Nada foi salvo.</div><ul class="list-msg err">${pr.erros.map(msgLi).join('')}</ul>` : ''}
+        ${dup ? `<div class="banner info" style="margin-top:8px">Este arquivo já foi importado em ${fmtDT(dup.id)} — não há nada novo para salvar.</div>` : ''}
+        ${!pr.erros.length && !dup ? `<div class="banner ok" style="margin-top:8px"><b>Arquivo conferido.</b> ${pr.rows.length} linhas válidas: NS = ATE_5_MIN ÷ TOTAL_ATENDIDAS em todas${pr.info.length ? ' · ' + esc(pr.info.join(' ')) : '.'}</div>` : ''}
+        ${pr.colunasExtras.length ? `<div class="banner info small">Colunas novas encontradas: <b>${pr.colunasExtras.map(esc).join(', ')}</b>. Ficam guardadas e aparecem no detalhe de cada período.</div>` : ''}
+        ${pr.avisos.length ? `<h3 class="sub">Avisos (não impedem salvar)</h3><ul class="list-msg warn">${pr.avisos.map(msgLi).join('')}</ul>` : ''}
+        ${mudancas.length ? `<h3 class="sub">Mudou em período fechado</h3><ul class="list-msg warn">${mudancas.map(m => `<li><b>${esc(m.periodo)}</b> · ${m.col}: salvo ${m.antes} → arquivo ${m.agora}</li>`).join('')}</ul>
+          <label class="chk"><input type="checkbox" id="chkMud" ${preview.aceito ? 'checked' : ''}> Confirmo que esses valores mudaram na origem e o arquivo novo está certo.</label>` : ''}
+        ${tabelaTipo('MES')}${tabelaTipo('SEMANA')}${tabelaTipo('DIA')}
       </div>
       <div class="row">
-        <button class="btn sec" id="bDesc">Descartar</button>
-        <button class="btn" id="bSave" ${pend.length ? 'disabled' : ''}>Salvar ${draft.rows.length} linhas</button>
-      </div>
-      ${pend.length ? `<button class="btn sec" id="bAll" style="margin-top:10px">Conferi tudo na tela — confirmar os ${pend.length} itens</button>` : ''}
-      <div style="height:6px"></div>
-      <button class="btn sec" id="bRetry" style="margin-top:6px">Tirar outra foto</button>`;
-
-    main.querySelectorAll('tr[data-i]').forEach(tr => tr.onclick = () => openRow(+tr.dataset.i));
-    $('#bDesc').onclick = async () => { if (await confirmDlg('Descartar esta leitura?')) { draft = null; renderCaptura(); } };
-    $('#bRetry').onclick = async () => { if (await confirmDlg('Descartar esta leitura e tirar outra foto?')) { draft = null; renderCaptura(); $('#fileCam').click(); } };
-    $('#bSave').onclick = saveDraft;
-    if ($('#bAll')) $('#bAll').onclick = async () => {
-      const faltando = pend.filter(p => p.s === 'faltando');
-      if (faltando.length) { toast('Ainda há valores faltando — toque na linha e digite.'); return; }
-      if (!await confirmDlg(`Você comparou os ${pend.length} itens amarelos com a tela e estão certos?`)) return;
-      for (const p of pend) draft.user[p.i + ':' + p.c] = true;
-      renderConf();
-    };
-    if ($('#thumb')) $('#thumb').onclick = () => {
-      const z = document.createElement('div'); z.className = 'zoom';
-      z.innerHTML = `<button class="btn" style="width:auto">Fechar</button><img src="${draft.thumb}">`;
-      z.querySelector('button').onclick = () => z.remove(); document.body.appendChild(z);
-    };
-  }
-  const labelCampo = c => ({ volume: 'VOLUME', total: 'TOTAL_ATENDIDAS', ate: 'ATE_5_MIN', ordem: 'PERÍODO', ns: 'NS', dias: 'QUANTIDADE_DIAS' }[c]);
-  const FLAG_TXT = { ok: 'conferido ✓', derivado: 'calculado', lido: 'lido — sem total para conferir', conferir: 'confira na tela', faltando: 'não consegui ler', user: 'você conferiu' };
-
-  function openRow(i) {
-    const r = draft.rows[i];
-    const bg = document.createElement('div'); bg.className = 'sheet-bg';
-    const ordTxt = r.ordem || '';
-    const fstate = c => cellState(i, c);
-    bg.innerHTML = `<div class="sheet">
-      <h3>Linha ${i + 1}: ${esc(r.label)}</h3>
-      <div class="small muted">Compare com a tela e corrija se preciso.</div>
-      <div class="field"><label><span>ORDEM (AAAAMMDD; mês = dia 00)</span><span>${FLAG_TXT[draft.user[i + ':ordem'] ? 'user' : (r.flags.ordem || 'ok')] || ''}</span></label>
-        <input id="eOrd" inputmode="numeric" value="${esc(ordTxt)}" class="f-${r.flags.ordem}"></div>
-      ${r.tipo === 'MES' ? `<div class="field"><label><span>QUANTIDADE_DIAS (mês aberto = dias até agora)</span><span>${FLAG_TXT[fstate('dias')] || ''}</span></label>
-        <input id="e_dias" inputmode="numeric" value="${r.dias ?? ''}" class="f-${fstate('dias')}"></div>` : ''}
-      ${FIELDS.map(c => `<div class="field"><label><span>${labelCampo(c)}</span><span>${FLAG_TXT[fstate(c)] || ''}</span></label>
-        <input id="e_${c}" inputmode="numeric" value="${r[c] ?? ''}" class="f-${fstate(c)}"></div>`).join('')}
-      <div class="small muted" id="eNs" style="margin:-2px 0 10px">NS calculado: ${fmtNs(r.ns)}</div>
-      <div class="row"><button class="btn sec" id="eCancel">Cancelar</button><button class="btn" id="eOk">Está certo</button></div>
-      <button class="btn sec" id="eDel" style="margin-top:10px;color:var(--bad)">Excluir esta linha</button>
-    </div>`;
-    document.body.appendChild(bg);
-    const val = c => { const t = bg.querySelector('#e_' + c).value.replace(/\D/g, ''); return t === '' ? null : parseInt(t, 10); };
-    const upd = () => { const t = val('total'), a = val('ate'); bg.querySelector('#eNs').textContent = 'NS calculado: ' + (t > 0 && a != null && a <= t ? fmtNs(E.ns4(a, t)) : '—'); };
-    FIELDS.forEach(c => bg.querySelector('#e_' + c).addEventListener('input', upd));
-    bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
-    bg.querySelector('#eCancel').onclick = () => bg.remove();
-    bg.querySelector('#eDel').onclick = async () => {
-      if (!await confirmDlg(`Excluir a linha ${r.label}? (use só se for uma linha lida por engano)`)) return;
-      draft.rows.splice(i, 1); remapUser(i); revalidateDraft(); bg.remove(); renderConf();
-    };
-    bg.querySelector('#eOk').onclick = () => {
-      const ord = bg.querySelector('#eOrd').value.replace(/\D/g, '');
-      if (!/^20\d{2}(0[1-9]|1[0-2])([0-2]\d|3[01])$/.test(ord)) { toast('ORDEM inválida. Ex.: 20261007 (dia) ou 20261000 (mês).'); return; }
-      const v = {}; for (const c of FIELDS) { v[c] = val(c); if (v[c] == null) { toast(`Preencha ${labelCampo(c)}.`); return; } }
-      if (v.ate > v.total) { toast('ATE_5_MIN não pode ser maior que TOTAL_ATENDIDAS.'); return; }
-      if (v.total > v.volume) { toast('TOTAL_ATENDIDAS não pode ser maior que VOLUME.'); return; }
-      if (draft.rows.some((x, k) => k !== i && x.ordem === ord)) { toast('Já existe outra linha com essa ORDEM.'); return; }
-      let dias = null;
-      if (ord.endsWith('00')) {
-        const cal = new Date(+ord.slice(0, 4), +ord.slice(4, 6), 0).getDate();
-        dias = bg.querySelector('#e_dias') ? val('dias') : r.dias;
-        if (!(dias >= 1 && dias <= cal)) { toast(`QUANTIDADE_DIAS deve ficar entre 1 e ${cal}.`); return; }
-      }
-      let changed = false;
-      if (ord !== r.ordem) { r.ordem = ord; r.tipo = ord.endsWith('00') ? 'MES' : 'DIA'; changed = true; }
-      for (const c of FIELDS) if (v[c] !== r[c]) { r[c] = v[c]; changed = true; }
-      if (dias != null && dias !== r.dias) { r.dias = dias; changed = true; }
-      for (const c of [...FIELDS, 'ordem']) draft.user[i + ':' + c] = true;
-      if (r.tipo === 'MES') draft.user[i + ':dias'] = true;
-      if (changed) draft.edited++;
-      revalidateDraft(); bg.remove(); renderConf();
-    };
-  }
-  function remapUser(removed) {
-    const nu = {};
-    for (const [k, v] of Object.entries(draft.user)) {
-      const [i, c] = k.split(':'); const n = +i;
-      if (n === removed) continue; nu[(n > removed ? n - 1 : n) + ':' + c] = v;
-    }
-    draft.user = nu;
-  }
-  function revalidateDraft() {
-    // reordena por ORDEM (meses primeiro, depois dias) levando junto as marcações do usuário
-    const tagged = draft.rows.map((r, i) => ({ r, u: Object.fromEntries(Object.entries(draft.user).filter(([k]) => +k.split(':')[0] === i).map(([k, v]) => [k.split(':')[1], v])) }));
-    tagged.sort((a, b) => (a.r.ordem || '').localeCompare(b.r.ordem || ''));
-    const ordered = [...tagged.filter(t => (t.r.ordem || '').endsWith('00')), ...tagged.filter(t => !(t.r.ordem || '').endsWith('00'))];
-    const re = E.revalidate(ordered.map(t => t.r), draft.meta, ordered.map(t => t.u));
-    draft.sumIssues = re.issues || [];
-    draft.rows = re;
-    draft.user = {};
-    ordered.forEach((t, k) => { for (const [c, v] of Object.entries(t.u)) draft.user[k + ':' + c] = v; });
+        <button class="btn sec" id="bDesc">${pr.erros.length || dup ? 'Voltar' : 'Descartar'}</button>
+        <button class="btn" id="bSalvar" ${bloqueia ? 'disabled' : ''}>Salvar ${pr.rows.length} linhas</button>
+      </div>`;
+    $('#bDesc').onclick = () => { preview = null; renderDados(); };
+    if ($('#chkMud')) $('#chkMud').onchange = e => { preview.aceito = e.target.checked; renderPreview(); };
+    $('#bSalvar').onclick = salvarPrevia;
   }
 
-  async function saveDraft() {
-    if (pendencias().length) { toast('Ainda há itens para conferir.'); return; }
-    const btn = $('#bSave'); btn.disabled = true; btn.textContent = 'Salvando…';
-    const id = Date.now();
-    const rows = draft.rows.map((r, i) => ({
-      ordem: r.ordem, tipo: r.tipo, label: r.label, dias: r.dias, partial: !!r.partial,
-      volume: r.volume, total: r.total, ate: r.ate, ns: r.ns, status: statusOf(r.ns, draft.meta),
-      origem: Object.fromEntries([...FIELDS, 'ns', 'ordem', 'dias'].map(c => [c, draft.user[i + ':' + c] ? 'usuario' : (r.flags[c] || 'ok')])),
-    }));
-    // checagens finais de integridade
-    for (const r of rows) {
-      if (!r.ordem || [r.volume, r.total, r.ate].some(v => !Number.isInteger(v) || v < 0) || r.ate > r.total || !(Number.isInteger(r.dias) && r.dias >= 1 && r.dias <= 31)) {
-        btn.disabled = false; btn.textContent = 'Salvar';
-        toast('Linha inválida: ' + r.label + '. Corrija antes de salvar.'); return;
-      }
-      r.ns = E.ns4(r.ate, r.total); r.status = statusOf(r.ns, draft.meta);
-    }
-    const cap = { id, app: APP_VERSION, meta: draft.meta, rows, thumb: draft.thumb, quality: { ...draft.quality, roi: undefined }, editadas: draft.edited, conferidasManual: Object.keys(draft.user).length };
+  async function salvarPrevia() {
+    const { pr, mudancas, dup } = preview;
+    if (pr.erros.length || dup || (mudancas.length && !preview.aceito)) return;
+    const btn = $('#bSalvar'); btn.disabled = true; btn.textContent = 'Salvando…';
+    const snap = montarSnap(pr, preview.hash, 'importado', preview.arquivo, null);
+    snap.mudancasAceitas = mudancas;
     try {
-      await dbPut(cap);
-      const back = await dbGet(id);
-      if (!back || JSON.stringify(back.rows) !== JSON.stringify(rows)) throw new Error('A verificação depois de salvar não bateu.');
-      draft = null;
+      await salvarSnapshot(snap);
+      preview = null;
       await reload();
-      toast(`Salvo ✓ ${rows.length} linhas`);
+      toast(`Salvo ✓ ${snap.rows.length} linhas (até ${fmtData(snap.dataRef)})`);
       go('painel');
     } catch (e) {
-      console.error(e);
       btn.disabled = false; btn.textContent = 'Tentar salvar de novo';
-      alert('ERRO AO SALVAR — os dados NÃO foram gravados.\n\n' + (e.message || e) + '\n\nA leitura continua aqui na tela; tente de novo. Se persistir, exporte um backup no Histórico.');
+      alert('ERRO AO SALVAR — os dados NÃO foram gravados.\n\n' + (e.message || e) + '\n\nA importação continua na tela; tente de novo. Se persistir, exporte um backup no Histórico.');
     }
   }
 
   // ---------------- Painel ----------------
-  // Alterna pela coluna TIPO_PERIODO: DIA (dias do mês mais recente) ou MES (meses).
-  let modo = (() => { try { return localStorage.getItem('ns-modo') === 'MES' ? 'MES' : 'DIA'; } catch (e) { return 'DIA'; } })();
   const setModo = m => { modo = m; try { localStorage.setItem('ns-modo', m); } catch (e) {} renderPainel(); };
-  const diasTxt = m => m.partial ? `${m.dias} de ${new Date(+m.ordem.slice(0, 4), +m.ordem.slice(4, 6), 0).getDate()} dias` : `${m.dias} dias`;
-
+  const LIMITE = { DIA: 14, SEMANA: 12, MES: 12 };
   function metaFalta(tot, ate, meta) {
     const ns = tot > 0 ? ate / tot : null;
-    return {
-      ns,
-      falta: ns != null && ns < meta ? Math.ceil(meta * tot - ate - 1e-9) : 0,
-      folga: ns != null && ns >= meta ? Math.floor(ate / meta - tot + 1e-9) : 0,
-    };
+    return { ns, falta: ns != null && ns < meta ? Math.ceil(meta * tot - ate - 1e-9) : 0, folga: ns != null && ns >= meta ? Math.floor(ate / meta - tot + 1e-9) : 0 };
   }
-  const kpiMeta = (f, sub) => `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'}${sub ? ' · ' + sub : ''}</div></div>`;
+  const nomeCur = r => r.tipo === 'MES' ? P.rotulo(r).replace('*', '') : r.tipo === 'SEMANA' ? 'Semana ' + P.rotulo(r).replace('*', '') : P.rotulo(r);
+  const diasTxt = r => r.completo ? `${r.dias} dias` : `${r.dias} de ${r.diasPeriodo} dias`;
+  const pp = v => (v >= 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' p.p.';
+  const pc = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1).replace('.', ',') + '%';
 
   function renderPainel() {
     const per = periodos();
+    const pubErr = pubStatus && pubStatus.estado === 'invalido' ? `<div class="banner bad small">O <code>data.txt</code> publicado tem erros e foi ignorado — mostrando os últimos dados válidos.</div>` : '';
     if (!per.size) {
-      main.innerHTML = `<div class="card empty"><div style="font-size:40px">📊</div><p>Nenhuma leitura salva ainda.</p>
-        <button class="btn" id="bGo">Capturar a primeira tabela</button></div>`;
-      $('#bGo').onclick = () => go('captura'); return;
+      main.innerHTML = `${pubErr}<div class="card empty"><div style="font-size:40px">📊</div><p>Nenhum dado ainda.</p>
+        <button class="btn" id="bGo">Importar o TXT</button></div>`;
+      $('#bGo').onclick = () => go('dados'); return;
     }
-    const all = [...per.values()];
-    const meses = all.filter(r => r.tipo === 'MES').sort((a, b) => a.ordem.localeCompare(b.ordem));
-    const diasAll = all.filter(r => r.tipo === 'DIA').sort((a, b) => a.ordem.localeCompare(b.ordem));
-    if (modo === 'DIA' && !diasAll.length && meses.length) modo = 'MES';
-    if (modo === 'MES' && !meses.length && diasAll.length) modo = 'DIA';
-    const meta = (caps[0] && caps[0].meta) || 0.8;
-    const head = `
+    const all = [...per.values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
+    const por = t => all.filter(r => r.tipo === t);
+    if (!por(modo).length) modo = ['DIA', 'SEMANA', 'MES'].find(t => por(t).length);
+    const items = por(modo).slice(-LIMITE[modo]);
+    const s0 = snaps[0];
+    main.innerHTML = `${pubErr}
       <div class="card topbar">
         <div class="seg" role="tablist" aria-label="TIPO_PERIODO">
-          <button role="tab" data-m="DIA" class="${modo === 'DIA' ? 'on' : ''}" ${diasAll.length ? '' : 'disabled'}>Dia</button>
-          <button role="tab" data-m="MES" class="${modo === 'MES' ? 'on' : ''}" ${meses.length ? '' : 'disabled'}>Mês</button>
+          ${['DIA', 'SEMANA', 'MES'].map(t => `<button role="tab" data-m="${t}" class="${modo === t ? 'on' : ''}" ${por(t).length ? '' : 'disabled'}>${NOME[t]}</button>`).join('')}
         </div>
-        <div class="small muted" style="text-align:right">Última leitura<br><b>${fmtDT(caps[0].id)}</b></div>
-      </div>`;
-    main.innerHTML = head + (modo === 'DIA' ? painelDia(per, diasAll, meta) : painelMes(meses, meta));
+        <div class="meta-line" style="margin-top:10px"><span>Dados até <b>${fmtData(s0.dataRef)}</b></span><span>${s0.origem === 'publicado' ? 'publicado' : 'importado'} ${fmtDT(s0.publicadoEm || s0.id)}</span></div>
+      </div>
+      ${painelTipo(modo, items, all)}`;
     main.querySelectorAll('.seg button').forEach(b => b.onclick = () => { if (b.dataset.m !== modo) setModo(b.dataset.m); });
-    bindChartTaps(modo === 'DIA' ? lastMonthDays(diasAll) : meses.slice(-12), modo);
-  }
-  function lastMonthDays(diasAll) {
-    if (!diasAll.length) return [];
-    const ym = diasAll[diasAll.length - 1].ordem.slice(0, 6);
-    return diasAll.filter(d => d.ordem.startsWith(ym));
+    bindTaps(items);
   }
 
-  function painelDia(per, diasAll, meta) {
-    const days = lastMonthDays(diasAll);
-    const ym = days[0].ordem.slice(0, 6);
-    const mRow = per.get(ym + '00');
-    const sum = c => days.reduce((s, d) => s + d[c], 0);
-    // acumulado: usa a linha do mês (Out*) se ela cobrir os mesmos dias; senão, soma os dias
-    const usaMes = mRow && mRow.partial && mRow.dias === days.length;
-    const tot = usaMes ? mRow.total : sum('total'), ate = usaMes ? mRow.ate : sum('ate'), vol = usaMes ? mRow.volume : sum('volume');
-    const f = metaFalta(tot, ate, meta);
-    const last = days[days.length - 1];
-    const naMeta = days.filter(d => d.ns >= meta).length;
-    const st = statusOf(f.ns, meta);
+  function painelTipo(t, items, all) {
+    const cur = items[items.length - 1], prev = items.length > 1 ? items[items.length - 2] : null;
+    const meta = cur.meta || 0.8;
+    const dPP = prev && cur.ns != null && prev.ns != null ? (cur.ns - prev.ns) * 100 : null;
+    let k = '';
+    if (t === 'DIA') {
+      const mesAberto = all.filter(r => r.tipo === 'MES' && !r.completo).slice(-1)[0] || all.filter(r => r.tipo === 'MES').slice(-1)[0];
+      const f = mesAberto ? metaFalta(mesAberto.total, mesAberto.ate, mesAberto.meta) : null;
+      const dVol = prev ? cur.volume / prev.volume - 1 : null;
+      k = `
+        <div class="kpi wide"><div class="l">Último dia · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
+          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ' · ' + pp(dPP) + ' vs dia anterior'}</div></div>
+        ${f ? `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(mesAberto, true))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'} · NS ${fmtPct(f.ns)}</div></div>` : ''}
+        <div class="kpi"><div class="l">Dias na meta</div><div class="v">${items.filter(d => d.ns >= d.meta).length}/${items.length}</div><div class="s">últimos ${items.length} dias</div></div>
+        <div class="kpi wide"><div class="l">Volume do dia</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ' · ' + pc(dVol) + ' vs dia anterior'}</div></div>`;
+    } else {
+      const f = metaFalta(cur.total, cur.ate, meta);
+      const vd = r => r.volume / r.dias;
+      const dVol = prev ? vd(cur) / vd(prev) - 1 : null;
+      const ab = t === 'MES' ? 'mês aberto' : 'semana aberta', fe = t === 'MES' ? 'fechado' : 'fechada';
+      k = `
+        <div class="kpi wide"><div class="l">${esc(nomeCur(cur))} ${cur.completo ? `<span class="fechado">${fe}</span>` : `<span class="aberto">${ab}</span>`}</div>
+          <div class="v">${fmtPct(cur.ns)}</div>
+          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
+        <div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
+        <div class="kpi"><div class="l">vs ${prev ? esc(P.rotulo(prev, true).replace('*', '')) : 'anterior'}</div><div class="v">${dPP == null ? '—' : pp(dPP)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
+        <div class="kpi wide"><div class="l">Volume médio por dia</div><div class="v">${fmtInt(vd(cur))}</div>
+          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(P.rotulo(prev, true).replace('*', ''))}`}</div></div>`;
+    }
+    const tituloNS = t === 'DIA' ? 'NS por dia' : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
+    const legNS = `<div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span>${t === 'DIA' ? '<span><i class="ln" style="border-color:var(--azul)"></i>acumulado do mês</span>' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta</span></div>`;
+    const cab = t === 'DIA' ? 'DIA' : t === 'SEMANA' ? 'SEMANA' : 'MÊS';
     return `
-      <div class="kpis">
-        <div class="kpi"><div class="l">NS acumulado · ${days.length} dia(s)</div><div class="v">${fmtPct(f.ns)}</div><div class="s">${st ? `<span class="pill ${st}">${st}</span>` : ''} meta ${fmtPct(meta)}</div></div>
-        ${kpiMeta(f, 'no mês')}
-        <div class="kpi"><div class="l">Último dia · ${esc(last.label)}</div><div class="v">${fmtPct(last.ns)}</div><div class="s"><span class="pill ${statusOf(last.ns, meta)}">${statusOf(last.ns, meta)}</span> ${fmtInt(last.total)} atend.</div></div>
-        <div class="kpi"><div class="l">Dias na meta</div><div class="v">${naMeta}/${days.length}</div><div class="s">atendidas ${fmtInt(tot)} de ${fmtInt(vol)}</div></div>
-      </div>
+      <div class="kpis">${k}</div>
       <div style="height:12px"></div>
-      <div class="card chart"><h2>NS por dia · ${ymLabel(ym)}</h2>${chartNs(days, meta, { acumulado: true, id: 'ch1', xlab: d => +d.ordem.slice(6) })}
-        <div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span><span><i class="ln" style="border-color:var(--azul)"></i>acumulado do mês</span><span><i class="ln dash"></i>meta</span></div>
-        <div class="cap" id="cap1">Toque numa barra para ver o dia.</div></div>
-      <div class="card chart"><h2>Volume e atendimento por dia</h2>${chartVol(days, { id: 'ch2', xlab: d => +d.ordem.slice(6) })}
-        <div class="legend"><span><i style="background:var(--bar1)"></i>volume</span><span><i style="background:var(--bar2)"></i>atendidas</span><span><i style="background:var(--bar3)"></i>em até 5 min</span></div>
-        <div class="cap" id="cap2">Toque numa barra para ver o dia.</div></div>
-      <div class="card"><h2>Dias · ${ymLabel(ym)}</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
-        <thead><tr><th>DIA</th><th>VOLUME</th><th>ATEND.</th><th>≤5 MIN</th><th>NS</th></tr></thead><tbody>
-        ${days.map(d => `<tr style="cursor:default"><td>${esc(d.label)}</td><td>${fmtInt(d.volume)}</td><td>${fmtInt(d.total)}</td><td>${fmtInt(d.ate)}</td>
-          <td><span class="pill ${statusOf(d.ns, meta)}">${fmtPct(d.ns)}</span></td></tr>`).join('')}</tbody></table></div></div>`;
+      <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
+        <div class="cap" id="cap1">${t === 'DIA' ? 'Toque numa barra para ver o dia.' : 'Abaixo de cada barra: QUANTIDADE_DIAS. Toque para detalhes.'}</div></div>
+      <div class="card chart"><h2>${t === 'DIA' ? 'Volume e atendimento por dia' : 'Volume médio por dia'}</h2>${chartVol(items, t)}
+        <div class="legend"><span><i style="background:var(--bar1)"></i>volume${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar2)"></i>atendidas${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar3)"></i>até 5 min${t === 'DIA' ? '' : '/dia'}</span></div>
+        <div class="cap" id="cap2">${t === 'DIA' ? 'Toque numa barra para ver o dia.' : 'Dividido pela QUANTIDADE_DIAS, para comparar o período aberto com os fechados.'}</div></div>
+      <div class="card"><h2>${t === 'DIA' ? 'Dias' : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+        <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
+        ${[...items].reverse().map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
+          <td>${fmtInt(r.volume)}</td><td>${fmtInt(r.total)}</td><td>${fmtInt(r.ate)}</td><td><span class="pill ${r.status}">${fmtPct(r.ns)}</span></td></tr>`).join('')}</tbody></table></div>
+        ${t === 'DIA' ? '' : `<div class="small muted" style="margin-top:6px">${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; os totais cobrem só esses dias.</div>`}</div>`;
   }
 
-  function painelMes(meses, meta) {
-    const ms = meses.slice(-12);
-    const cur = ms[ms.length - 1], prev = ms.length > 1 ? ms[ms.length - 2] : null;
-    const f = metaFalta(cur.total, cur.ate, meta);
-    const st = statusOf(f.ns, meta);
-    const dPP = prev ? (cur.ns - prev.ns) * 100 : null;
-    const vd = m => m.dias ? m.volume / m.dias : null;
-    const dVol = prev && vd(prev) ? (vd(cur) / vd(prev) - 1) : null;
-    const nomeMes = m => MESES[+m.ordem.slice(4, 6) - 1] + '/' + m.ordem.slice(2, 4);
-    return `
-      <div class="kpis">
-        <div class="kpi wide"><div class="l">${nomeMes(cur)} ${cur.partial ? '<span class="aberto">mês aberto</span>' : '<span class="fechado">fechado</span>'}</div>
-          <div class="v">${fmtPct(f.ns)}</div>
-          <div class="s">${st ? `<span class="pill ${st}">${st}</span>` : ''} meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
-        ${kpiMeta(f, cur.partial ? `com ${cur.dias} dias` : '')}
-        <div class="kpi"><div class="l">vs ${prev ? nomeMes(prev) : 'mês anterior'}</div><div class="v">${dPP == null ? '—' : (dPP >= 0 ? '+' : '') + dPP.toFixed(1).replace('.', ',') + ' p.p.'}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
-        <div class="kpi wide"><div class="l">Volume médio por dia</div><div class="v">${fmtInt(vd(cur) && Math.round(vd(cur)))}</div>
-          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${dVol >= 0 ? '+' : ''}${(dVol * 100).toFixed(1).replace('.', ',')}% vs ${nomeMes(prev)}`}</div></div>
-      </div>
-      <div style="height:12px"></div>
-      <div class="card chart"><h2>NS por mês</h2>${chartNs(ms, meta, { id: 'ch1', mensal: true })}
-        <div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span><span><i class="ln dash"></i>meta</span><span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>mês aberto</span></div>
-        <div class="cap" id="cap1">Abaixo de cada mês: QUANTIDADE_DIAS. Toque numa barra para detalhes.</div></div>
-      <div class="card chart"><h2>Volume médio por dia</h2>${chartVol(ms, { id: 'ch2', mensal: true, porDia: true })}
-        <div class="legend"><span><i style="background:var(--bar1)"></i>volume/dia</span><span><i style="background:var(--bar2)"></i>atendidas/dia</span><span><i style="background:var(--bar3)"></i>até 5 min/dia</span></div>
-        <div class="cap" id="cap2">Dividido pela QUANTIDADE_DIAS, para comparar o mês aberto com os fechados.</div></div>
-      <div class="card"><h2>Meses</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
-        <thead><tr><th>MÊS</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
-        ${[...ms].reverse().map(m => `<tr style="cursor:default"><td>${esc(m.label)}</td><td class="${m.partial ? 'dias-aberto' : ''}">${m.partial ? m.dias + '/' + new Date(+m.ordem.slice(0, 4), +m.ordem.slice(4, 6), 0).getDate() : m.dias}</td><td>${fmtInt(m.volume)}</td><td>${fmtInt(m.total)}</td><td>${fmtInt(m.ate)}</td>
-          <td><span class="pill ${statusOf(m.ns, meta)}">${fmtPct(m.ns)}</span></td></tr>`).join('')}</tbody></table></div>
-        <div class="small muted" style="margin-top:6px">Mês aberto: DIAS mostra dias até agora / dias do mês; os totais cobrem só esses dias.</div></div>`;
-  }
-
+  // ---------------- Gráficos (SVG) ----------------
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const statusColor = (v, meta) => v >= meta ? css('--verde') : v >= 0.7 ? css('--amarelo') : css('--vermelho');
-  function gridPct(L, W, R, y, lo, hi) {
-    let g = '';
-    for (let t = lo; t <= hi + 1e-9; t += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(t * 100)}</text>`;
-    return g;
-  }
-  // NS (dias ou meses). Mensal: rótulo do mês + QUANTIDADE_DIAS embaixo; mês aberto hachurado.
-  function chartNs(items, meta, o) {
-    const W = 360, H = o.mensal ? 214 : 210, L = 30, R = 8, T = o.mensal ? 18 : 12, B = o.mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
-    const vals = items.map(d => d.ns);
-    let acc = 0, accT = 0; const cum = o.acumulado ? items.map(d => { acc += d.ate; accT += d.total; return accT ? acc / accT : null; }) : [];
-    const lo = Math.max(0, Math.floor((Math.min(...vals, ...cum, meta) - 0.05) * 10) / 10), hi = 1;
-    const y = v => T + ih - (v - lo) / (hi - lo) * ih;
-    const bw = iw / items.length, gap = o.mensal ? Math.min(18, bw * 0.3) : Math.min(6, bw * 0.25);
-    const bars = items.map((d, i) => {
-      const x = L + i * bw + gap / 2, w = bw - gap, h = Math.max(1, y(lo) - y(d.ns)), c = statusColor(d.ns, meta);
-      const hatch = o.mensal && d.partial ? `<rect x="${x}" y="${y(d.ns)}" width="${w}" height="${h}" rx="3" fill="url(#hatch)"/>` : '';
-      return `<rect x="${x}" y="${y(d.ns)}" width="${w}" height="${h}" rx="${o.mensal ? 3 : 2}" fill="${c}"/>${hatch}`;
-    }).join('');
-    const vlabels = o.mensal ? items.map((d, i) => `<text x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="10.5" font-weight="700" text-anchor="middle" fill="${css('--ink')}">${(d.ns * 100).toFixed(1).replace('.', ',')}</text>`).join('') : '';
-    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
-    const line = o.acumulado ? `<path d="${cum.map((v, i) => `${i ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2"/>
-      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"/>`).join('')}` : '';
-    const step = Math.ceil(items.length / 10);
-    const xl = items.map((d, i) => {
+  const corStatus = s => s === 'VERDE' ? css('--verde') : s === 'AMARELO' ? css('--amarelo') : css('--vermelho');
+  function xLabels(items, t, L, bw, H) {
+    const step = Math.ceil(items.length / (t === 'DIA' ? 14 : 12));
+    return items.map((d, i) => {
       const cx = L + i * bw + bw / 2;
-      if (o.mensal) return `<text x="${cx}" y="${H - 22}" font-size="10.5" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${MESES[+d.ordem.slice(4, 6) - 1]}${d.partial ? '*' : ''}</text>
-        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.partial ? css('--user') : css('--ink3')}" font-weight="${d.partial ? 700 : 400}">${d.dias}d</text>`;
-      return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${o.xlab(d)}</text>` : '';
+      if (t === 'DIA') return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${P.rotulo(d, true)}</text>` : '';
+      return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${P.rotulo(d, true)}</text>
+        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo ? 400 : 700}">${d.dias}d</text>`;
     }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="${o.id}" role="img" aria-label="NS">
-      <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".45"/></pattern></defs>
-      ${gridPct(L, W, R, y, lo, hi)}${bars}
-      <line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
-      ${line}${vlabels}${xl}${hits}</svg>`;
   }
-  // Volume / atendidas / ≤5min (por dia; ou por mês dividido pela QUANTIDADE_DIAS)
-  function chartVol(items, o) {
-    const W = 360, H = o.mensal ? 214 : 200, L = 38, R = 8, T = 10, B = o.mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
-    const k = d => o.porDia ? 1 / (d.dias || 1) : 1;
+  function chartNs(items, t) {
+    const mensal = t !== 'DIA';
+    const W = 360, H = mensal ? 214 : 210, L = 30, R = 8, T = 18, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const meta = items[items.length - 1].meta || 0.8;
+    const vals = items.map(d => d.ns ?? 0);
+    // acumulado do mês (dias): reinicia quando muda o mês
+    let acc = 0, accT = 0, mes = null;
+    const cum = t === 'DIA' ? items.map(d => { const m = d.inicio.slice(0, 7); if (m !== mes) { mes = m; acc = 0; accT = 0; } acc += d.ate; accT += d.total; return accT ? acc / accT : null; }) : [];
+    const lo = Math.max(0, Math.floor((Math.min(...vals, ...cum.filter(v => v != null), meta) - 0.05) * 10) / 10), hi = 1;
+    const y = v => T + ih - (v - lo) / (hi - lo) * ih;
+    const bw = iw / items.length, gap = mensal ? Math.min(16, bw * 0.3) : Math.min(6, bw * 0.25);
+    let g = '';
+    for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(v * 100)}</text>`;
+    const bars = items.map((d, i) => {
+      const x = L + i * bw + gap / 2, w = bw - gap, h = Math.max(1, y(lo) - y(d.ns ?? lo));
+      const hatch = !d.completo ? `<rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="3" fill="url(#hatch)"/>` : '';
+      return `<rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="${mensal ? 3 : 2}" fill="${corStatus(d.status)}"/>${hatch}`;
+    }).join('');
+    const vl = items.length <= 12 ? items.map((d, i) => d.ns == null ? '' : `<text x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="700" text-anchor="middle" fill="${css('--ink')}">${(d.ns * 100).toFixed(t === 'DIA' && items.length > 8 ? 0 : 1).replace('.', ',')}</text>`).join('') : '';
+    const line = cum.length ? `<path d="${cum.map((v, i) => `${i && items[i].inicio.slice(0, 7) === items[i - 1].inicio.slice(0, 7) ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2"/>
+      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"/>`).join('')}` : '';
+    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS">
+      <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".45"/></pattern></defs>
+      ${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
+      ${line}${t === 'DIA' && cum.length ? '' : vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+  }
+  function chartVol(items, t) {
+    const mensal = t !== 'DIA';
+    const W = 360, H = mensal ? 214 : 200, L = 38, R = 8, T = 10, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const k = d => mensal ? 1 / (d.dias || 1) : 1;
     const max = Math.max(...items.map(d => d.volume * k(d))) * 1.05 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
-    const bw = iw / items.length, gap = o.mensal ? Math.min(18, bw * 0.3) : Math.min(6, bw * 0.25);
+    const bw = iw / items.length, gap = mensal ? Math.min(16, bw * 0.3) : Math.min(6, bw * 0.25);
     let g = '';
-    for (let t = 0; t <= max; t += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${t >= 1000 ? (t / 1000).toLocaleString('pt-BR') + 'k' : Math.round(t)}</text>`;
+    for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
     const bars = items.map((d, i) => { const x = L + i * bw + gap / 2, w = bw - gap, f = k(d);
       return `<rect x="${x}" y="${y(d.volume * f)}" width="${w}" height="${y(0) - y(d.volume * f)}" rx="2" fill="${css('--bar1')}"/>
         <rect x="${x + w * 0.15}" y="${y(d.total * f)}" width="${w * 0.7}" height="${y(0) - y(d.total * f)}" rx="1.5" fill="${css('--bar2')}"/>
         <rect x="${x + w * 0.3}" y="${y(d.ate * f)}" width="${w * 0.4}" height="${y(0) - y(d.ate * f)}" rx="1" fill="${css('--bar3')}"/>`; }).join('');
     const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
-    const step = Math.ceil(items.length / 10);
-    const xl = items.map((d, i) => {
-      const cx = L + i * bw + bw / 2;
-      if (o.mensal) return `<text x="${cx}" y="${H - 22}" font-size="10.5" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${MESES[+d.ordem.slice(4, 6) - 1]}${d.partial ? '*' : ''}</text>
-        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.partial ? css('--user') : css('--ink3')}" font-weight="${d.partial ? 700 : 400}">${d.dias}d</text>`;
-      return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${o.xlab(d)}</text>` : '';
-    }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="${o.id}" role="img" aria-label="Volume">${g}${bars}${xl}${hits}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${g}${bars}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
-  function bindChartTaps(items, m) {
-    const cap = (id, txt) => { const c = $(id); if (c) c.textContent = txt; };
-    const info = d => m === 'MES'
-      ? `${d.label} (${diasTxt(d)}) — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)} (${fmtInt(Math.round(d.volume / (d.dias || 1)))}/dia)`
-      : `${d.label} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} atendidas em até 5 min · volume ${fmtInt(d.volume)}`;
+  function bindTaps(items) {
+    const info = d => {
+      const ex = d.extras && Object.keys(d.extras).length ? ' · ' + Object.entries(d.extras).map(([c, v]) => `${c} ${typeof v === 'number' ? String(v).replace('.', ',') : v}`).join(' · ') : '';
+      const base = `${P.rotulo(d)}${d.tipo === 'DIA' ? '' : ` (${diasTxt(d)})`} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)}`;
+      return base + (d.tipo === 'DIA' ? '' : ` (${fmtInt(d.volume / d.dias)}/dia)`) + ex;
+    };
     [['#ch1', '#cap1'], ['#ch2', '#cap2']].forEach(([s, c]) => {
       const el = $(s); if (!el) return;
-      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) cap(c, info(items[+t.dataset.i])); });
+      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) { const cp = $(c); if (cp) cp.textContent = info(items[+t.dataset.i]); } });
     });
   }
 
   // ---------------- Histórico ----------------
   function renderHist() {
     main.innerHTML = `
-      <div class="card"><h2>Leituras salvas (${caps.length})</h2>
-        ${caps.length ? `<div class="list">${caps.map(c => {
-          const lab = c.rows.length ? `${esc(c.rows[0].label)} … ${esc(c.rows[c.rows.length - 1].label)}` : '';
-          return `<div class="it" data-id="${c.id}">${c.thumb ? `<img src="${c.thumb}" alt="">` : ''}
-            <div class="t"><b>${fmtDT(c.id)}</b>${c.editadas ? `<span class="badge">${c.editadas} editada(s)</span>` : ''}<div class="small muted">${c.rows.length} linhas · ${lab}</div></div>›</div>`;
-        }).join('')}</div>` : '<div class="empty">Nada salvo ainda.</div>'}
+      <div class="card"><h2>Arquivos recebidos (${snaps.length})</h2>
+        ${snaps.length ? `<div class="list">${snaps.map(s => `<div class="it" data-id="${s.id}">
+            <div class="t"><b>Dados até ${fmtData(s.dataRef)}</b> <span class="origem ${s.origem}">${s.origem}</span>
+            <div class="small muted">${s.rows.length} linhas · recebido ${fmtDT(s.id)}${s.colunasExtras && s.colunasExtras.length ? ' · +' + s.colunasExtras.length + ' coluna(s)' : ''}</div></div>›</div>`).join('')}</div>`
+        : '<div class="empty">Nada salvo ainda.</div>'}
+        <div class="small muted" style="margin-top:8px">O painel usa, para cada período, o valor do arquivo com dados mais recentes. Arquivos antigos ficam como histórico.</div>
       </div>
       <div class="card"><h2>Backup</h2>
-        <div class="small muted" style="margin-bottom:10px">Os dados ficam só neste aparelho. Exporte de vez em quando.</div>
-        <div class="row"><button class="btn sec" id="bExp">Exportar</button><button class="btn sec" id="bImp">Importar</button></div>
+        <div class="small muted" style="margin-bottom:10px">Os dados ficam neste aparelho. Exporte de vez em quando.</div>
+        <div class="row"><button class="btn sec" id="bExp">Exportar</button><button class="btn sec" id="bImp">Importar backup</button></div>
         <div class="small muted" id="persist" style="margin-top:10px"></div>
       </div>`;
-    main.querySelectorAll('.it').forEach(it => it.onclick = () => openCap(+it.dataset.id));
+    main.querySelectorAll('.it').forEach(it => it.onclick = () => abrirSnap(+it.dataset.id));
     $('#bExp').onclick = exportar;
     $('#bImp').onclick = () => $('#fileImp').click();
     if (navigator.storage && navigator.storage.persisted) navigator.storage.persisted().then(p => {
-      const el = $('#persist'); if (el) el.textContent = p ? 'Armazenamento protegido contra limpeza automática ✓' : 'Armazenamento pode ser limpo pelo navegador se faltar espaço — mantenha backup.';
+      const el = $('#persist'); if (el) el.textContent = p ? 'Armazenamento protegido contra limpeza automática ✓' : 'O navegador pode limpar os dados se faltar espaço — mantenha backup.';
     });
   }
-  function openCap(id) {
-    const c = caps.find(x => x.id === id); if (!c) return;
+  function abrirSnap(id) {
+    const s = snaps.find(x => x.id === id); if (!s) return;
     const bg = document.createElement('div'); bg.className = 'sheet-bg';
-    bg.innerHTML = `<div class="sheet"><h3>Leitura de ${fmtDT(c.id)}</h3>
-      ${c.thumb ? `<img class="thumb" src="${c.thumb}" style="margin:8px 0">` : ''}
-      <table class="conf" style="cursor:default"><thead><tr><th>PERÍODO</th><th>VOLUME</th><th>TOT</th><th>ATE5</th><th>NS</th></tr></thead><tbody>
-      ${c.rows.map(r => `<tr style="cursor:default"><td>${esc(r.label)}</td>${['volume', 'total', 'ate'].map(k => `<td class="${r.origem && r.origem[k] === 'usuario' ? 'f-user' : ''}">${r[k]}</td>`).join('')}<td>${fmtNs(r.ns)}</td></tr>`).join('')}
+    bg.innerHTML = `<div class="sheet"><h3>Dados até ${fmtData(s.dataRef)}</h3>
+      <div class="small muted">${esc(s.arquivo)} · ${s.origem} · recebido ${fmtDT(s.id)}${s.mudancasAceitas && s.mudancasAceitas.length ? ` · ${s.mudancasAceitas.length} alteração(ões) em período fechado confirmada(s)` : ''}</div>
+      <table class="conf" style="cursor:default;margin-top:8px"><thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
+      ${s.rows.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, r.tipo === 'SEMANA'))}</td><td>${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td><td>${r.volume}</td><td>${r.total}</td><td>${r.ate}</td><td>${fmtNs(r.ns)}</td></tr>`).join('')}
       </tbody></table>
-      <div class="small muted" style="margin:6px 0 12px">Em roxo: valores conferidos/editados por você.</div>
-      <div class="row"><button class="btn sec" id="cClose">Fechar</button><button class="btn danger" id="cDel">Excluir leitura</button></div></div>`;
+      <div class="row" style="margin-top:12px"><button class="btn sec" id="cClose">Fechar</button><button class="btn danger" id="cDel">Excluir</button></div></div>`;
     document.body.appendChild(bg);
     bg.addEventListener('click', e => { if (e.target === bg) bg.remove(); });
     bg.querySelector('#cClose').onclick = () => bg.remove();
     bg.querySelector('#cDel').onclick = async () => {
-      if (!await confirmDlg('Excluir esta leitura? Os gráficos passam a usar a leitura anterior de cada período.')) return;
-      try { await dbDel(id); await reload(); bg.remove(); toast('Leitura excluída'); renderHist(); }
+      if (!window.confirm('Excluir este arquivo do histórico? O painel passa a usar os outros arquivos salvos.')) return;
+      try { await dbDel(id); await reload(); bg.remove(); toast('Excluído'); renderHist(); }
       catch (e) { alert('Erro ao excluir: ' + e.message); }
     };
   }
   function exportar() {
-    const data = { app: 'ns-leitor', versao: APP_VERSION, exportadoEm: new Date().toISOString(), capturas: caps };
+    const data = { app: 'ns-painel', versao: APP_VERSION, exportadoEm: new Date().toISOString(), snapshots: snaps };
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = `ns-leitor-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `ns-painel-backup-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   }
   $('#fileImp').addEventListener('change', async e => {
     const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
       const data = JSON.parse(await f.text());
-      if (!data || data.app !== 'ns-leitor' || !Array.isArray(data.capturas)) throw new Error('Arquivo não é um backup do NS Leitor.');
-      const valid = data.capturas.filter(c => Number.isInteger(c.id) && Array.isArray(c.rows) && c.rows.every(r =>
-        typeof r.ordem === 'string' && /^\d{8}$/.test(r.ordem) && [r.volume, r.total, r.ate].every(Number.isInteger) && r.ate <= r.total));
-      if (valid.length !== data.capturas.length && !window.confirm(`${data.capturas.length - valid.length} leitura(s) do arquivo estão inválidas e serão ignoradas. Continuar?`)) return;
-      const ids = new Set(caps.map(c => c.id));
-      const novas = valid.filter(c => !ids.has(c.id));
-      for (const c of novas) await dbPut(c);
+      if (!data || data.app !== 'ns-painel' || !Array.isArray(data.snapshots)) throw new Error('Arquivo não é um backup do NS Painel.');
+      const valid = data.snapshots.filter(s => Number.isInteger(s.id) && Array.isArray(s.rows) && s.rows.length && s.rows.every(r =>
+        /^[123]\d{8}$/.test(r.ordem) && [r.volume, r.total, r.ate, r.dias].every(Number.isInteger) && r.ate <= r.total && r.total <= r.volume));
+      if (valid.length !== data.snapshots.length && !window.confirm(`${data.snapshots.length - valid.length} item(ns) do backup estão inválidos e serão ignorados. Continuar?`)) return;
+      const ids = new Set(snaps.map(s => s.id)), hs = new Set(snaps.map(s => s.hash));
+      const novos = valid.filter(s => !ids.has(s.id) && !hs.has(s.hash));
+      for (const s of novos) await salvarSnapshot(s);
       await reload();
-      toast(`Importadas ${novas.length} leitura(s)` + (valid.length - novas.length ? ` · ${valid.length - novas.length} já existiam` : ''));
+      toast(`Importados ${novos.length} arquivo(s)` + (valid.length - novos.length ? ` · ${valid.length - novos.length} já existiam` : ''));
       renderHist();
-    } catch (err) { alert('Não consegui importar: ' + err.message); }
+    } catch (err) { alert('Não consegui importar o backup: ' + err.message); }
   });
 
   // ---------------- Início ----------------
-  window.addEventListener('beforeunload', e => { if (draft || busy) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('beforeunload', e => { if (preview) { e.preventDefault(); e.returnValue = ''; } });
   (async () => {
     try { await reload(); } catch (e) { main.innerHTML = `<div class="card"><div class="banner bad">Erro ao abrir os dados: ${esc(e.message)}</div></div>`; return; }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-    go(caps.length ? 'painel' : 'captura');
+    go(snaps.length ? 'painel' : 'dados');
+    buscarPublicado(false);
   })();
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
-  window.__nsApp = { version: APP_VERSION, state: () => ({ caps, draft, view }), processFile, reload };
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado };
 })();
