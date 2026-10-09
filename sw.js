@@ -1,5 +1,5 @@
 /* NS Leitor — service worker */
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const CACHE = 'ns-leitor-v' + VERSION;
 const VENDOR_CACHE = 'ns-leitor-vendor-5.1.1'; // motor de OCR (só muda se trocar a versão do Tesseract)
 const CORE = ['./', 'index.html', 'app.js', 'engine.js', 'ocr-adapter.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'vendor/tesseract.min.js'];

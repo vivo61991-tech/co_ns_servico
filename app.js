@@ -1,7 +1,7 @@
 /* NS Leitor — app */
 (function () {
   'use strict';
-  const APP_VERSION = '1.0.0';
+  const APP_VERSION = '1.1.0';
   const E = window.NSEngine;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -42,7 +42,6 @@
   let view = 'painel';
   let draft = null;       // leitura aguardando conferência
   let busy = false;
-  let selMonth = null;
 
   async function reload() {
     caps = (await dbAll()).sort((a, b) => b.id - a.id);
@@ -178,7 +177,7 @@
     draft.rows.forEach((r, i) => {
       const old = r.ordem && per.get(r.ordem);
       if (!old || r.tipo !== 'MES' || r.partial || old.partial) return;
-      for (const c of FIELDS) if (old[c] != null && r[c] != null && old[c] !== r[c] && !draft.user[i + ':' + c])
+      for (const c of [...FIELDS, 'dias']) if (old[c] != null && r[c] != null && old[c] !== r[c] && !draft.user[i + ':' + c])
         out.push({ i, c, old: old[c], now: r[c] });
     });
     return out;
@@ -187,6 +186,7 @@
     const p = [];
     draft.rows.forEach((r, i) => {
       for (const c of FIELDS) { const s = cellState(i, c); if (s === 'conferir' || s === 'faltando') p.push({ i, c, s }); }
+      if (r.tipo === 'MES') { const sd = cellState(i, 'dias'); if (sd === 'conferir' || sd === 'faltando') p.push({ i, c: 'dias', s: sd }); }
       const o = r.flags.ordem;
       if ((o === 'conferir' || o === 'faltando') && !draft.user[i + ':ordem']) p.push({ i, c: 'ordem', s: o });
     });
@@ -203,6 +203,8 @@
     if (draft.sumIssues && draft.sumIssues.length) banners.push(`<div class="banner bad"><b>A soma dos dias não fecha com o mês:</b> ${draft.sumIssues.map(k => `${labelCampo(k.col)} — dias somam ${k.soma}, mês mostra ${k.mes}`).join(' · ')}. Confira os valores.</div>`);
     if (pend.length) banners.push(`<div class="banner warn"><b>${pend.length} ${pend.length === 1 ? 'item precisa' : 'itens precisam'} de conferência.</b> Toque na linha para corrigir ou confirmar olhando a tela.</div>`);
     else banners.push(`<div class="banner ok"><b>Tudo conferido.</b> ${q.trusted} de ${q.cells} valores batem com os totais da própria tabela.</div>`);
+    const abertos = draft.rows.filter(r => r.tipo === 'MES' && r.partial);
+    if (abertos.length) banners.push(`<div class="banner info small">${abertos.map(r => `<b>${esc(r.label)}</b> é mês aberto: ${r.dias} de ${new Date(+r.ordem.slice(0, 4), +r.ordem.slice(4, 6), 0).getDate()} dias (QUANTIDADE_DIAS)`).join(' · ')}.</div>`);
     if (nLido) banners.push(`<div class="banner info small">${nLido} valor(es) de meses fechados não têm conferência automática (a tabela não traz um total para comparar). Vale bater o olho.</div>`);
 
     main.innerHTML = `
@@ -220,17 +222,18 @@
         </div>
         <div style="overflow-x:auto">
         <table class="conf">
-          <thead><tr><th>PERÍODO</th><th>VOLUME</th><th>TOT_ATEND</th><th>ATE_5MIN</th><th>NS</th></tr></thead>
+          <thead><tr><th>PERÍODO</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead>
           <tbody>${draft.rows.map((r, i) => {
             const o = r.flags.ordem, oc = draft.user[i + ':ordem'] ? 'user' : (o === 'conferir' || o === 'faltando' ? o : 'ok');
             const isConf = c => conf.some(k => k.i === i && k.c === c);
             return `<tr data-i="${i}">
               <td class="f-${oc}">${esc(r.label)}</td>
+              ${r.tipo === 'MES' ? `<td class="f-${isConf('dias') ? 'conferir' : cellState(i, 'dias')}">${r.dias ?? '?'}</td>` : '<td class="dim">1</td>'}
               ${FIELDS.map(c => `<td class="f-${isConf(c) ? 'conferir' : cellState(i, c)}">${r[c] == null ? '?' : r[c]}</td>`).join('')}
               <td class="f-${cellState(i, 'ns')}">${fmtNs(r.ns)}</td></tr>`;
           }).join('')}</tbody>
         </table></div>
-        <div class="small muted" style="margin-top:6px">Números no mesmo formato da tela do SQL Developer, para comparar fácil. NS = ATE_5MIN ÷ TOTAL_ATENDIDAS.</div>
+        <div class="small muted" style="margin-top:6px">Números no mesmo formato da tela do SQL Developer, para comparar fácil. ATEND. = TOTAL_ATENDIDAS · ≤5MIN = ATE_5_MIN · NS = ≤5MIN ÷ ATEND.</div>
       </div>
       <div class="row">
         <button class="btn sec" id="bDesc">Descartar</button>
@@ -257,8 +260,8 @@
       z.querySelector('button').onclick = () => z.remove(); document.body.appendChild(z);
     };
   }
-  const labelCampo = c => ({ volume: 'VOLUME', total: 'TOTAL_ATENDIDAS', ate: 'ATE_5_MIN', ordem: 'PERÍODO', ns: 'NS' }[c]);
-  const FLAG_TXT = { ok: 'conferido ✓', derivado: 'calculado pela soma do mês', lido: 'lido — sem total para conferir', conferir: 'confira na tela', faltando: 'não consegui ler', user: 'você conferiu' };
+  const labelCampo = c => ({ volume: 'VOLUME', total: 'TOTAL_ATENDIDAS', ate: 'ATE_5_MIN', ordem: 'PERÍODO', ns: 'NS', dias: 'QUANTIDADE_DIAS' }[c]);
+  const FLAG_TXT = { ok: 'conferido ✓', derivado: 'calculado', lido: 'lido — sem total para conferir', conferir: 'confira na tela', faltando: 'não consegui ler', user: 'você conferiu' };
 
   function openRow(i) {
     const r = draft.rows[i];
@@ -270,6 +273,8 @@
       <div class="small muted">Compare com a tela e corrija se preciso.</div>
       <div class="field"><label><span>ORDEM (AAAAMMDD; mês = dia 00)</span><span>${FLAG_TXT[draft.user[i + ':ordem'] ? 'user' : (r.flags.ordem || 'ok')] || ''}</span></label>
         <input id="eOrd" inputmode="numeric" value="${esc(ordTxt)}" class="f-${r.flags.ordem}"></div>
+      ${r.tipo === 'MES' ? `<div class="field"><label><span>QUANTIDADE_DIAS (mês aberto = dias até agora)</span><span>${FLAG_TXT[fstate('dias')] || ''}</span></label>
+        <input id="e_dias" inputmode="numeric" value="${r.dias ?? ''}" class="f-${fstate('dias')}"></div>` : ''}
       ${FIELDS.map(c => `<div class="field"><label><span>${labelCampo(c)}</span><span>${FLAG_TXT[fstate(c)] || ''}</span></label>
         <input id="e_${c}" inputmode="numeric" value="${r[c] ?? ''}" class="f-${fstate(c)}"></div>`).join('')}
       <div class="small muted" id="eNs" style="margin:-2px 0 10px">NS calculado: ${fmtNs(r.ns)}</div>
@@ -293,10 +298,18 @@
       if (v.ate > v.total) { toast('ATE_5_MIN não pode ser maior que TOTAL_ATENDIDAS.'); return; }
       if (v.total > v.volume) { toast('TOTAL_ATENDIDAS não pode ser maior que VOLUME.'); return; }
       if (draft.rows.some((x, k) => k !== i && x.ordem === ord)) { toast('Já existe outra linha com essa ORDEM.'); return; }
+      let dias = null;
+      if (ord.endsWith('00')) {
+        const cal = new Date(+ord.slice(0, 4), +ord.slice(4, 6), 0).getDate();
+        dias = bg.querySelector('#e_dias') ? val('dias') : r.dias;
+        if (!(dias >= 1 && dias <= cal)) { toast(`QUANTIDADE_DIAS deve ficar entre 1 e ${cal}.`); return; }
+      }
       let changed = false;
       if (ord !== r.ordem) { r.ordem = ord; r.tipo = ord.endsWith('00') ? 'MES' : 'DIA'; changed = true; }
       for (const c of FIELDS) if (v[c] !== r[c]) { r[c] = v[c]; changed = true; }
+      if (dias != null && dias !== r.dias) { r.dias = dias; changed = true; }
       for (const c of [...FIELDS, 'ordem']) draft.user[i + ':' + c] = true;
+      if (r.tipo === 'MES') draft.user[i + ':dias'] = true;
       if (changed) draft.edited++;
       revalidateDraft(); bg.remove(); renderConf();
     };
@@ -328,11 +341,11 @@
     const rows = draft.rows.map((r, i) => ({
       ordem: r.ordem, tipo: r.tipo, label: r.label, dias: r.dias, partial: !!r.partial,
       volume: r.volume, total: r.total, ate: r.ate, ns: r.ns, status: statusOf(r.ns, draft.meta),
-      origem: Object.fromEntries([...FIELDS, 'ns', 'ordem'].map(c => [c, draft.user[i + ':' + c] ? 'usuario' : (r.flags[c] || 'ok')])),
+      origem: Object.fromEntries([...FIELDS, 'ns', 'ordem', 'dias'].map(c => [c, draft.user[i + ':' + c] ? 'usuario' : (r.flags[c] || 'ok')])),
     }));
     // checagens finais de integridade
     for (const r of rows) {
-      if (!r.ordem || [r.volume, r.total, r.ate].some(v => !Number.isInteger(v) || v < 0) || r.ate > r.total) {
+      if (!r.ordem || [r.volume, r.total, r.ate].some(v => !Number.isInteger(v) || v < 0) || r.ate > r.total || !(Number.isInteger(r.dias) && r.dias >= 1 && r.dias <= 31)) {
         btn.disabled = false; btn.textContent = 'Salvar';
         toast('Linha inválida: ' + r.label + '. Corrija antes de salvar.'); return;
       }
@@ -355,10 +368,21 @@
   }
 
   // ---------------- Painel ----------------
-  function monthsAvailable(per) {
-    const s = new Set(); for (const o of per.keys()) s.add(o.slice(0, 6));
-    return [...s].sort().reverse();
+  // Alterna pela coluna TIPO_PERIODO: DIA (dias do mês mais recente) ou MES (meses).
+  let modo = (() => { try { return localStorage.getItem('ns-modo') === 'MES' ? 'MES' : 'DIA'; } catch (e) { return 'DIA'; } })();
+  const setModo = m => { modo = m; try { localStorage.setItem('ns-modo', m); } catch (e) {} renderPainel(); };
+  const diasTxt = m => m.partial ? `${m.dias} de ${new Date(+m.ordem.slice(0, 4), +m.ordem.slice(4, 6), 0).getDate()} dias` : `${m.dias} dias`;
+
+  function metaFalta(tot, ate, meta) {
+    const ns = tot > 0 ? ate / tot : null;
+    return {
+      ns,
+      falta: ns != null && ns < meta ? Math.ceil(meta * tot - ate - 1e-9) : 0,
+      folga: ns != null && ns >= meta ? Math.floor(ate / meta - tot + 1e-9) : 0,
+    };
   }
+  const kpiMeta = (f, sub) => `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'}${sub ? ' · ' + sub : ''}</div></div>`;
+
   function renderPainel() {
     const per = periodos();
     if (!per.size) {
@@ -366,112 +390,164 @@
         <button class="btn" id="bGo">Capturar a primeira tabela</button></div>`;
       $('#bGo').onclick = () => go('captura'); return;
     }
-    const months = monthsAvailable(per);
-    if (!selMonth || !months.includes(selMonth)) selMonth = months[0];
-    const ym = selMonth;
-    const days = [...per.values()].filter(r => r.tipo === 'DIA' && r.ordem.startsWith(ym)).sort((a, b) => a.ordem.localeCompare(b.ordem));
-    const mRow = per.get(ym + '00');
+    const all = [...per.values()];
+    const meses = all.filter(r => r.tipo === 'MES').sort((a, b) => a.ordem.localeCompare(b.ordem));
+    const diasAll = all.filter(r => r.tipo === 'DIA').sort((a, b) => a.ordem.localeCompare(b.ordem));
+    if (modo === 'DIA' && !diasAll.length && meses.length) modo = 'MES';
+    if (modo === 'MES' && !meses.length && diasAll.length) modo = 'DIA';
     const meta = (caps[0] && caps[0].meta) || 0.8;
+    const head = `
+      <div class="card topbar">
+        <div class="seg" role="tablist" aria-label="TIPO_PERIODO">
+          <button role="tab" data-m="DIA" class="${modo === 'DIA' ? 'on' : ''}" ${diasAll.length ? '' : 'disabled'}>Dia</button>
+          <button role="tab" data-m="MES" class="${modo === 'MES' ? 'on' : ''}" ${meses.length ? '' : 'disabled'}>Mês</button>
+        </div>
+        <div class="small muted" style="text-align:right">Última leitura<br><b>${fmtDT(caps[0].id)}</b></div>
+      </div>`;
+    main.innerHTML = head + (modo === 'DIA' ? painelDia(per, diasAll, meta) : painelMes(meses, meta));
+    main.querySelectorAll('.seg button').forEach(b => b.onclick = () => { if (b.dataset.m !== modo) setModo(b.dataset.m); });
+    bindChartTaps(modo === 'DIA' ? lastMonthDays(diasAll) : meses.slice(-12), modo);
+  }
+  function lastMonthDays(diasAll) {
+    if (!diasAll.length) return [];
+    const ym = diasAll[diasAll.length - 1].ordem.slice(0, 6);
+    return diasAll.filter(d => d.ordem.startsWith(ym));
+  }
+
+  function painelDia(per, diasAll, meta) {
+    const days = lastMonthDays(diasAll);
+    const ym = days[0].ordem.slice(0, 6);
+    const mRow = per.get(ym + '00');
     const sum = c => days.reduce((s, d) => s + d[c], 0);
-    const tot = mRow ? mRow.total : sum('total'), ate = mRow ? mRow.ate : sum('ate'), vol = mRow ? mRow.volume : sum('volume');
-    const ns = tot > 0 ? ate / tot : null;
+    // acumulado: usa a linha do mês (Out*) se ela cobrir os mesmos dias; senão, soma os dias
+    const usaMes = mRow && mRow.partial && mRow.dias === days.length;
+    const tot = usaMes ? mRow.total : sum('total'), ate = usaMes ? mRow.ate : sum('ate'), vol = usaMes ? mRow.volume : sum('volume');
+    const f = metaFalta(tot, ate, meta);
+    const last = days[days.length - 1];
     const naMeta = days.filter(d => d.ns >= meta).length;
-    const falta = ns != null && ns < meta ? Math.ceil(meta * tot - ate - 1e-9) : 0;
-    const folga = ns != null && ns >= meta ? Math.floor(ate / meta - tot + 1e-9) : 0;
-    const st = statusOf(ns, meta);
-    const last = caps[0];
-    main.innerHTML = `
-      <div class="card" style="display:flex;align-items:center;gap:10px">
-        <select id="selM">${months.map(m => `<option value="${m}" ${m === ym ? 'selected' : ''}>${ymLabel(m)}</option>`).join('')}</select>
-        <div class="small muted" style="flex:1;text-align:right">Última leitura<br><b>${fmtDT(last.id)}</b></div>
-      </div>
+    const st = statusOf(f.ns, meta);
+    return `
       <div class="kpis">
-        <div class="kpi"><div class="l">NS 5 min${mRow && mRow.partial ? ' (parcial)' : ''}</div><div class="v">${fmtPct(ns)}</div><div class="s">${st ? `<span class="pill ${st}">${st}</span>` : ''} meta ${fmtPct(meta)}</div></div>
-        <div class="kpi"><div class="l">${falta ? 'Faltam p/ meta' : 'Folga na meta'}</div><div class="v">${fmtInt(falta || folga)}</div><div class="s">${falta ? 'atend. em até 5 min (volume atual)' : 'atend. podem passar de 5 min'}</div></div>
-        <div class="kpi"><div class="l">Atendidas / volume</div><div class="v">${fmtInt(tot)}</div><div class="s">de ${fmtInt(vol)} (${vol ? fmtPct(tot / vol) : '—'})</div></div>
-        <div class="kpi"><div class="l">Dias na meta</div><div class="v">${days.length ? `${naMeta}/${days.length}` : '—'}</div><div class="s">${days.length ? `${days.length} dia(s) lidos` : 'sem dias deste mês'}</div></div>
+        <div class="kpi"><div class="l">NS acumulado · ${days.length} dia(s)</div><div class="v">${fmtPct(f.ns)}</div><div class="s">${st ? `<span class="pill ${st}">${st}</span>` : ''} meta ${fmtPct(meta)}</div></div>
+        ${kpiMeta(f, 'no mês')}
+        <div class="kpi"><div class="l">Último dia · ${esc(last.label)}</div><div class="v">${fmtPct(last.ns)}</div><div class="s"><span class="pill ${statusOf(last.ns, meta)}">${statusOf(last.ns, meta)}</span> ${fmtInt(last.total)} atend.</div></div>
+        <div class="kpi"><div class="l">Dias na meta</div><div class="v">${naMeta}/${days.length}</div><div class="s">atendidas ${fmtInt(tot)} de ${fmtInt(vol)}</div></div>
       </div>
       <div style="height:12px"></div>
-      ${days.length ? `<div class="card chart"><h2>NS por dia · ${ymLabel(ym)}</h2>${chartNsDias(days, meta)}
-        <div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span><span><i style="background:var(--ink);height:2px"></i>acumulado do mês</span><span><i style="background:none;border-top:2px dashed var(--ink3);height:0"></i>meta</span></div>
+      <div class="card chart"><h2>NS por dia · ${ymLabel(ym)}</h2>${chartNs(days, meta, { acumulado: true, id: 'ch1', xlab: d => +d.ordem.slice(6) })}
+        <div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span><span><i class="ln" style="border-color:var(--azul)"></i>acumulado do mês</span><span><i class="ln dash"></i>meta</span></div>
         <div class="cap" id="cap1">Toque numa barra para ver o dia.</div></div>
-      <div class="card chart"><h2>Volume e atendimento por dia</h2>${chartVolDias(days)}
+      <div class="card chart"><h2>Volume e atendimento por dia</h2>${chartVol(days, { id: 'ch2', xlab: d => +d.ordem.slice(6) })}
         <div class="legend"><span><i style="background:var(--bar1)"></i>volume</span><span><i style="background:var(--bar2)"></i>atendidas</span><span><i style="background:var(--bar3)"></i>em até 5 min</span></div>
-        <div class="cap" id="cap2">Toque numa barra para ver o dia.</div></div>` : ''}
-      ${chartMesesCard(per, meta)}
-      ${days.length ? tabelaDias(days, meta) : ''}`;
-    $('#selM').onchange = e => { selMonth = e.target.value; renderPainel(); };
-    bindChartTaps(days, meta);
+        <div class="cap" id="cap2">Toque numa barra para ver o dia.</div></div>
+      <div class="card"><h2>Dias · ${ymLabel(ym)}</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+        <thead><tr><th>DIA</th><th>VOLUME</th><th>ATEND.</th><th>≤5 MIN</th><th>NS</th></tr></thead><tbody>
+        ${days.map(d => `<tr style="cursor:default"><td>${esc(d.label)}</td><td>${fmtInt(d.volume)}</td><td>${fmtInt(d.total)}</td><td>${fmtInt(d.ate)}</td>
+          <td><span class="pill ${statusOf(d.ns, meta)}">${fmtPct(d.ns)}</span></td></tr>`).join('')}</tbody></table></div></div>`;
+  }
+
+  function painelMes(meses, meta) {
+    const ms = meses.slice(-12);
+    const cur = ms[ms.length - 1], prev = ms.length > 1 ? ms[ms.length - 2] : null;
+    const f = metaFalta(cur.total, cur.ate, meta);
+    const st = statusOf(f.ns, meta);
+    const dPP = prev ? (cur.ns - prev.ns) * 100 : null;
+    const vd = m => m.dias ? m.volume / m.dias : null;
+    const dVol = prev && vd(prev) ? (vd(cur) / vd(prev) - 1) : null;
+    const nomeMes = m => MESES[+m.ordem.slice(4, 6) - 1] + '/' + m.ordem.slice(2, 4);
+    return `
+      <div class="kpis">
+        <div class="kpi wide"><div class="l">${nomeMes(cur)} ${cur.partial ? '<span class="aberto">mês aberto</span>' : '<span class="fechado">fechado</span>'}</div>
+          <div class="v">${fmtPct(f.ns)}</div>
+          <div class="s">${st ? `<span class="pill ${st}">${st}</span>` : ''} meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
+        ${kpiMeta(f, cur.partial ? `com ${cur.dias} dias` : '')}
+        <div class="kpi"><div class="l">vs ${prev ? nomeMes(prev) : 'mês anterior'}</div><div class="v">${dPP == null ? '—' : (dPP >= 0 ? '+' : '') + dPP.toFixed(1).replace('.', ',') + ' p.p.'}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
+        <div class="kpi wide"><div class="l">Volume médio por dia</div><div class="v">${fmtInt(vd(cur) && Math.round(vd(cur)))}</div>
+          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${dVol >= 0 ? '+' : ''}${(dVol * 100).toFixed(1).replace('.', ',')}% vs ${nomeMes(prev)}`}</div></div>
+      </div>
+      <div style="height:12px"></div>
+      <div class="card chart"><h2>NS por mês</h2>${chartNs(ms, meta, { id: 'ch1', mensal: true })}
+        <div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span><span><i class="ln dash"></i>meta</span><span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>mês aberto</span></div>
+        <div class="cap" id="cap1">Abaixo de cada mês: QUANTIDADE_DIAS. Toque numa barra para detalhes.</div></div>
+      <div class="card chart"><h2>Volume médio por dia</h2>${chartVol(ms, { id: 'ch2', mensal: true, porDia: true })}
+        <div class="legend"><span><i style="background:var(--bar1)"></i>volume/dia</span><span><i style="background:var(--bar2)"></i>atendidas/dia</span><span><i style="background:var(--bar3)"></i>até 5 min/dia</span></div>
+        <div class="cap" id="cap2">Dividido pela QUANTIDADE_DIAS, para comparar o mês aberto com os fechados.</div></div>
+      <div class="card"><h2>Meses</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+        <thead><tr><th>MÊS</th><th>DIAS</th><th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
+        ${[...ms].reverse().map(m => `<tr style="cursor:default"><td>${esc(m.label)}</td><td class="${m.partial ? 'dias-aberto' : ''}">${m.partial ? m.dias + '/' + new Date(+m.ordem.slice(0, 4), +m.ordem.slice(4, 6), 0).getDate() : m.dias}</td><td>${fmtInt(m.volume)}</td><td>${fmtInt(m.total)}</td><td>${fmtInt(m.ate)}</td>
+          <td><span class="pill ${statusOf(m.ns, meta)}">${fmtPct(m.ns)}</span></td></tr>`).join('')}</tbody></table></div>
+        <div class="small muted" style="margin-top:6px">Mês aberto: DIAS mostra dias até agora / dias do mês; os totais cobrem só esses dias.</div></div>`;
   }
 
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  function chartNsDias(days, meta) {
-    const W = 360, H = 210, L = 30, R = 8, T = 12, B = 26, iw = W - L - R, ih = H - T - B;
-    const vals = days.map(d => d.ns);
-    let acc = 0, accT = 0; const cum = days.map(d => { acc += d.ate; accT += d.total; return accT ? acc / accT : null; });
+  const statusColor = (v, meta) => v >= meta ? css('--verde') : v >= 0.7 ? css('--amarelo') : css('--vermelho');
+  function gridPct(L, W, R, y, lo, hi) {
+    let g = '';
+    for (let t = lo; t <= hi + 1e-9; t += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(t * 100)}</text>`;
+    return g;
+  }
+  // NS (dias ou meses). Mensal: rótulo do mês + QUANTIDADE_DIAS embaixo; mês aberto hachurado.
+  function chartNs(items, meta, o) {
+    const W = 360, H = o.mensal ? 214 : 210, L = 30, R = 8, T = o.mensal ? 18 : 12, B = o.mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const vals = items.map(d => d.ns);
+    let acc = 0, accT = 0; const cum = o.acumulado ? items.map(d => { acc += d.ate; accT += d.total; return accT ? acc / accT : null; }) : [];
     const lo = Math.max(0, Math.floor((Math.min(...vals, ...cum, meta) - 0.05) * 10) / 10), hi = 1;
     const y = v => T + ih - (v - lo) / (hi - lo) * ih;
-    const bw = iw / days.length, gap = Math.min(6, bw * 0.25);
-    const col = v => v >= meta ? css('--verde') : v >= 0.7 ? css('--amarelo') : css('--vermelho');
-    let g = '';
-    for (let t = lo; t <= hi + 1e-9; t += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(t * 100)}</text>`;
-    const bars = days.map((d, i) => `<rect data-i="${i}" x="${L + i * bw + gap / 2}" y="${y(d.ns)}" width="${bw - gap}" height="${Math.max(1, y(lo) - y(d.ns))}" rx="2" fill="${col(d.ns)}"/>`).join('');
-    const hits = days.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih}" fill="transparent"/>`).join('');
-    const line = cum.map((v, i) => `${i ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('');
-    const step = Math.ceil(days.length / 10);
-    const xl = days.map((d, i) => i % step === 0 || i === days.length - 1 ? `<text x="${L + i * bw + bw / 2}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${+d.ordem.slice(6)}</text>` : '').join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS por dia">${g}${bars}
+    const bw = iw / items.length, gap = o.mensal ? Math.min(18, bw * 0.3) : Math.min(6, bw * 0.25);
+    const bars = items.map((d, i) => {
+      const x = L + i * bw + gap / 2, w = bw - gap, h = Math.max(1, y(lo) - y(d.ns)), c = statusColor(d.ns, meta);
+      const hatch = o.mensal && d.partial ? `<rect x="${x}" y="${y(d.ns)}" width="${w}" height="${h}" rx="3" fill="url(#hatch)"/>` : '';
+      return `<rect x="${x}" y="${y(d.ns)}" width="${w}" height="${h}" rx="${o.mensal ? 3 : 2}" fill="${c}"/>${hatch}`;
+    }).join('');
+    const vlabels = o.mensal ? items.map((d, i) => `<text x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="10.5" font-weight="700" text-anchor="middle" fill="${css('--ink')}">${(d.ns * 100).toFixed(1).replace('.', ',')}</text>`).join('') : '';
+    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
+    const line = o.acumulado ? `<path d="${cum.map((v, i) => `${i ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2"/>
+      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"/>`).join('')}` : '';
+    const step = Math.ceil(items.length / 10);
+    const xl = items.map((d, i) => {
+      const cx = L + i * bw + bw / 2;
+      if (o.mensal) return `<text x="${cx}" y="${H - 22}" font-size="10.5" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${MESES[+d.ordem.slice(4, 6) - 1]}${d.partial ? '*' : ''}</text>
+        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.partial ? css('--user') : css('--ink3')}" font-weight="${d.partial ? 700 : 400}">${d.dias}d</text>`;
+      return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${o.xlab(d)}</text>` : '';
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" id="${o.id}" role="img" aria-label="NS">
+      <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".45"/></pattern></defs>
+      ${gridPct(L, W, R, y, lo, hi)}${bars}
       <line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
-      <path d="${line}" fill="none" stroke="${css('--ink')}" stroke-width="2"/>
-      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.4" fill="${css('--ink')}"/>`).join('')}
-      ${xl}${hits}</svg>`;
+      ${line}${vlabels}${xl}${hits}</svg>`;
   }
-  function chartVolDias(days) {
-    const W = 360, H = 200, L = 38, R = 8, T = 10, B = 26, iw = W - L - R, ih = H - T - B;
-    const max = Math.max(...days.map(d => d.volume)) * 1.05 || 1;
+  // Volume / atendidas / ≤5min (por dia; ou por mês dividido pela QUANTIDADE_DIAS)
+  function chartVol(items, o) {
+    const W = 360, H = o.mensal ? 214 : 200, L = 38, R = 8, T = 10, B = o.mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const k = d => o.porDia ? 1 / (d.dias || 1) : 1;
+    const max = Math.max(...items.map(d => d.volume * k(d))) * 1.05 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
-    const bw = iw / days.length, gap = Math.min(6, bw * 0.25);
+    const bw = iw / items.length, gap = o.mensal ? Math.min(18, bw * 0.3) : Math.min(6, bw * 0.25);
     let g = '';
-    for (let t = 0; t <= max; t += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${t >= 1000 ? (t / 1000).toLocaleString('pt-BR') + 'k' : t}</text>`;
-    const bars = days.map((d, i) => { const x = L + i * bw + gap / 2, w = bw - gap;
-      return `<rect x="${x}" y="${y(d.volume)}" width="${w}" height="${y(0) - y(d.volume)}" rx="2" fill="${css('--bar1')}"/>
-        <rect x="${x + w * 0.15}" y="${y(d.total)}" width="${w * 0.7}" height="${y(0) - y(d.total)}" rx="1.5" fill="${css('--bar2')}"/>
-        <rect x="${x + w * 0.3}" y="${y(d.ate)}" width="${w * 0.4}" height="${y(0) - y(d.ate)}" rx="1" fill="${css('--bar3')}"/>`; }).join('');
-    const hits = days.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih}" fill="transparent"/>`).join('');
-    const step = Math.ceil(days.length / 10);
-    const xl = days.map((d, i) => i % step === 0 || i === days.length - 1 ? `<text x="${L + i * bw + bw / 2}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${+d.ordem.slice(6)}</text>` : '').join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume por dia">${g}${bars}${xl}${hits}</svg>`;
+    for (let t = 0; t <= max; t += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${t >= 1000 ? (t / 1000).toLocaleString('pt-BR') + 'k' : Math.round(t)}</text>`;
+    const bars = items.map((d, i) => { const x = L + i * bw + gap / 2, w = bw - gap, f = k(d);
+      return `<rect x="${x}" y="${y(d.volume * f)}" width="${w}" height="${y(0) - y(d.volume * f)}" rx="2" fill="${css('--bar1')}"/>
+        <rect x="${x + w * 0.15}" y="${y(d.total * f)}" width="${w * 0.7}" height="${y(0) - y(d.total * f)}" rx="1.5" fill="${css('--bar2')}"/>
+        <rect x="${x + w * 0.3}" y="${y(d.ate * f)}" width="${w * 0.4}" height="${y(0) - y(d.ate * f)}" rx="1" fill="${css('--bar3')}"/>`; }).join('');
+    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
+    const step = Math.ceil(items.length / 10);
+    const xl = items.map((d, i) => {
+      const cx = L + i * bw + bw / 2;
+      if (o.mensal) return `<text x="${cx}" y="${H - 22}" font-size="10.5" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${MESES[+d.ordem.slice(4, 6) - 1]}${d.partial ? '*' : ''}</text>
+        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.partial ? css('--user') : css('--ink3')}" font-weight="${d.partial ? 700 : 400}">${d.dias}d</text>`;
+      return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${o.xlab(d)}</text>` : '';
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" id="${o.id}" role="img" aria-label="Volume">${g}${bars}${xl}${hits}</svg>`;
   }
-  function chartMesesCard(per, meta) {
-    const ms = [...per.values()].filter(r => r.tipo === 'MES').sort((a, b) => a.ordem.localeCompare(b.ordem)).slice(-12);
-    if (!ms.length) return '';
-    const W = 360, H = 190, L = 30, R = 8, T = 18, B = 26, iw = W - L - R, ih = H - T - B;
-    const lo = Math.max(0, Math.floor((Math.min(...ms.map(m => m.ns), meta) - 0.1) * 10) / 10), hi = 1;
-    const y = v => T + ih - (v - lo) / (hi - lo) * ih;
-    const bw = iw / ms.length, gap = Math.min(18, bw * 0.35);
-    const col = v => v >= meta ? css('--verde') : v >= 0.7 ? css('--amarelo') : css('--vermelho');
-    let g = '';
-    for (let t = lo; t <= hi + 1e-9; t += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(t) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(t * 100)}</text>`;
-    const bars = ms.map((m, i) => `<rect x="${L + i * bw + gap / 2}" y="${y(m.ns)}" width="${bw - gap}" height="${y(lo) - y(m.ns)}" rx="3" fill="${col(m.ns)}" ${m.partial ? 'fill-opacity=".55"' : ''}/>
-      <text x="${L + i * bw + bw / 2}" y="${y(m.ns) - 4}" font-size="10" font-weight="600" text-anchor="middle" fill="${css('--ink')}">${(m.ns * 100).toFixed(1).replace('.', ',')}</text>
-      <text x="${L + i * bw + bw / 2}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${MESES[+m.ordem.slice(4, 6) - 1]}${m.partial ? '*' : ''}</text>`).join('');
-    return `<div class="card chart"><h2>NS por mês</h2><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="NS por mês">${g}${bars}
-      <line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/></svg>
-      <div class="cap">* mês em andamento (parcial).</div></div>`;
-  }
-  function tabelaDias(days, meta) {
-    return `<div class="card"><h2>Dias</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
-      <thead><tr><th>DIA</th><th>VOLUME</th><th>ATEND.</th><th>≤5 MIN</th><th>NS</th></tr></thead><tbody>
-      ${days.map(d => `<tr style="cursor:default"><td>${esc(d.label)}</td><td>${fmtInt(d.volume)}</td><td>${fmtInt(d.total)}</td><td>${fmtInt(d.ate)}</td>
-        <td><span class="pill ${statusOf(d.ns, meta)}">${fmtPct(d.ns)}</span></td></tr>`).join('')}</tbody></table></div></div>`;
-  }
-  function bindChartTaps(days, meta) {
+  function bindChartTaps(items, m) {
     const cap = (id, txt) => { const c = $(id); if (c) c.textContent = txt; };
-    const info = d => `${d.label} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} atendidas em até 5 min · volume ${fmtInt(d.volume)}`;
+    const info = d => m === 'MES'
+      ? `${d.label} (${diasTxt(d)}) — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)} (${fmtInt(Math.round(d.volume / (d.dias || 1)))}/dia)`
+      : `${d.label} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} atendidas em até 5 min · volume ${fmtInt(d.volume)}`;
     [['#ch1', '#cap1'], ['#ch2', '#cap2']].forEach(([s, c]) => {
       const el = $(s); if (!el) return;
-      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) cap(c, info(days[+t.dataset.i])); });
+      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) cap(c, info(items[+t.dataset.i])); });
     });
   }
 

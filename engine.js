@@ -318,6 +318,7 @@
         _row: r, raw: Object.fromEntries(COLS.map(c => [c, txt(c)])), reads,
         ordemLida: parseOrdem(txt('ordem')), tipoLido: parseTipo(txt('tipo')), periodoLido: parsePeriodo(txt('periodo')),
         statusLido: parseStatus(txt('status')), meta: parseNs(txt('meta')),
+        diasReads: [parseIntCell(txt('dias'))].filter(v => v != null && v >= 1 && v <= 31),
       };
     });
   }
@@ -535,7 +536,9 @@
 
   function finalize(rows, meta) {
     const metaV = meta || 0.8;
+    const lastMes = [...rows].reverse().find(r => r.tipo === 'MES' && r.ordem);
     for (const r of rows) {
+      if (r.diasReads && r.diasReads.length) r.diasLido = +majority(r.diasReads);
       for (const c of NUMC) if (r[c] == null) r.flags[c] = 'faltando';
       if (r.volume != null && r.total != null && r.volume < r.total) r.flags.volume = 'conferir';
       // volume de dia só se confirma pela soma do mês; sem ela, fica para conferir
@@ -543,10 +546,28 @@
       r.status = r.ns == null ? null : (r.ns >= metaV ? 'VERDE' : r.ns >= 0.7 ? 'AMARELO' : 'VERMELHO');
       if (r.ordem) {
         const { y, m, d } = ymd(r.ordem);
-        if (r.tipo === 'DIA') { r.label = `${String(d).padStart(2, '0')}/${MESES[m - 1]}`; r.dias = 1; }
+        if (r.tipo === 'DIA') { r.label = `${String(d).padStart(2, '0')}/${MESES[m - 1]}`; r.dias = 1; r.flags.dias = 'ok'; }
         else {
+          // QUANTIDADE_DIAS: o mês pode estar aberto. Esperado = nº de dias exibidos (mês com *)
+          // ou dias do calendário (mês fechado). Lido = o que está na tela.
+          const cal = new Date(y, m, 0).getDate();
+          const lido = r.diasLido ?? null;
+          if (r.flags.dias === 'user' && lido != null) { r.dias = lido; r.partial = r.partial || lido < cal; }
+          else if (r.partial) {
+            r.dias = r.dias || lido;
+            r.flags.dias = lido == null ? 'derivado' : lido === r.dias ? 'ok' : 'conferir';
+          } else if (lido != null && lido < cal && r === lastMes) {
+            // mês sem linhas de dia, mas a tela diz que tem menos dias: está aberto
+            r.dias = lido; r.partial = true; r.flags.dias = (r.periodoLido && r.periodoLido.partial) ? 'ok' : 'conferir';
+          } else if (r !== lastMes) {
+            // mês seguido de outro mês na tabela: está fechado, vale o calendário
+            r.dias = cal;
+            r.flags.dias = (r.diasReads || [lido]).includes(cal) ? 'ok' : 'derivado';
+          } else {
+            r.dias = cal;
+            r.flags.dias = lido == null ? 'derivado' : (r.diasReads || [lido]).includes(cal) ? 'ok' : 'conferir';
+          }
           r.label = MESES[m - 1].charAt(0) + MESES[m - 1].slice(1).toLowerCase() + (r.partial ? '*' : '');
-          if (!r.partial) r.dias = new Date(y, m, 0).getDate();
         }
       } else r.label = (r.raw && r.raw.periodo) || '?';
     }
@@ -620,6 +641,7 @@
       if (rows2.length === rows.length) {
         rows2.forEach((r, i) => {
           for (const c of NUMC) r.reads[c].push(...rows[i].reads[c]);
+          r.diasReads.push(...rows[i].diasReads);
           r.ordemLida = r.ordemLida || rows[i].ordemLida; r.tipoLido = r.tipoLido || rows[i].tipoLido;
           r.periodoLido = r.periodoLido || rows[i].periodoLido; r.meta = r.meta ?? rows[i].meta;
         });
@@ -635,6 +657,7 @@
     if (adapter.recognizeCell || adapter.recognizeCells) {
       const jobs = [];
       for (const r of rows) for (const c of NUMC) if (c === 'volume' || r.flags[c] !== 'ok') jobs.push([r, c]);
+      for (const r of rows) if (r.tipo === 'MES') jobs.push([r, 'dias']);
       const specs = jobs.map(([r, c]) => {
         const [x0, x1] = colBounds(c, hd);
         const cy = r._row.yAt((x0 + x1) / 2), half = ri.pitch * 0.5;
@@ -646,7 +669,11 @@
       if (adapter.recognizeCells) results = await adapter.recognizeCells(page, specs, tick);
       else { results = []; for (const sp of specs) { results.push(await adapter.recognizeCell(page, sp.rect, sp.whitelist)); tick(); } }
       jobs.forEach(([r, c], i) => {
-        for (const t of results[i] || []) { const v = c === 'ns' ? parseNs(t) : parseIntCell(t); if (v != null) r.reads[c].push(v); }
+        for (const t of results[i] || []) {
+          const v = c === 'ns' ? parseNs(t) : parseIntCell(t);
+          if (v == null) continue;
+          if (c === 'dias') { if (v >= 1 && v <= 31) r.diasReads.push(v); } else r.reads[c].push(v);
+        }
       });
       solveAll(rows);
     }
@@ -669,7 +696,9 @@
       const x = { ...r, flags: { ...(r.flags || {}) }, raw: {}, partial: false };
       x.tipo = x.ordem && x.ordem.endsWith('00') ? 'MES' : 'DIA';
       x.ns = x.total > 0 && x.ate != null && x.ate <= x.total ? ns4(x.ate, x.total) : null;
-      for (const c of ['volume', 'total', 'ate', 'ordem']) if (t[c]) x.flags[c] = 'user';
+      // QUANTIDADE_DIAS é reavaliada do zero a partir do valor atual (lido ou editado)
+      x.diasLido = x.dias ?? null; x.dias = null; x.periodoLido = { partial: !!r.partial }; delete x.flags.dias;
+      for (const c of ['volume', 'total', 'ate', 'ordem', 'dias']) if (t[c]) x.flags[c] = 'user';
       if (x.ns == null) x.flags.ns = 'faltando';
       else if (t.total || t.ate) x.flags.ns = 'user';
       return x;
