@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.7.1';
+  const APP_VERSION = '2.8.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -57,14 +57,18 @@
   // valor vigente de cada período = o do arquivo com dados mais recentes que o contém
   function periodos() {
     const map = new Map();
-    for (const s of snaps) for (const r of s.rows) if (!map.has(r.ordem)) map.set(r.ordem, r);
+    // NS exato (ATE_5_MIN ÷ TOTAL_ATENDIDAS) para exibir e comparar: evita arredondar duas vezes
+    // (ex.: 1.802 ÷ 2.414 = 74,648% → 74,6%; pelo NS de 4 casas 0,7465 sairia 74,7%)
+    for (const s of snaps) for (const r of s.rows) if (!map.has(r.ordem)) map.set(r.ordem, { ...r, ns: r.total > 0 ? r.ate / r.total : null });
     return map;
   }
 
   // ---------------- Utilidades ----------------
   const fmtInt = v => v == null ? '—' : Math.round(v).toLocaleString('pt-BR');
   const fmtNs = v => v == null ? '—' : String(+v.toFixed(4)).replace('.', ',');
-  const fmtPct = v => v == null ? '—' : (v * 100).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+  // percentual com 1 casa, arredondamento correto (sem erro de ponto flutuante)
+  const p1 = v => (Math.round(v * 1000 + 1e-9) / 10).toFixed(1).replace('.', ',');
+  const fmtPct = v => v == null ? '—' : p1(v) + '%';
   const fmtDT = ts => new Date(ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   const fmtData = isoD => isoD ? isoD.slice(8, 10) + '/' + isoD.slice(5, 7) + '/' + isoD.slice(2, 4) : '—';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -504,7 +508,7 @@
       return `<g${opac(d)}>${barra(x, yt, w, yb, corStatus(d.status))}${!d.completo ? barra(x, yt, w, yb, 'url(#hatch)') : ''}</g>`;
     }).join('');
     const fs = bw >= 34 ? 10.5 : bw >= 24 ? 9 : 7.5;
-    const vl = items.map((d, i) => d.ns == null ? '' : `<text class="vlab" x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${d.ordem === sel ? fs + 1 : fs}" font-weight="800" text-anchor="middle" fill="${d.ordem === sel ? css('--selink') : css('--ink')}" ${halo()}${opac(d)}>${(d.ns * 100).toFixed(1).replace('.', ',')}</text>`).join('');
+    const vl = items.map((d, i) => d.ns == null ? '' : `<text class="vlab" x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${d.ordem === sel ? fs + 1 : fs}" font-weight="800" text-anchor="middle" fill="${d.ordem === sel ? css('--selink') : css('--ink')}" ${halo()}${opac(d)}>${p1(d.ns)}</text>`).join('');
     const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS">
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".5"/></pattern></defs>
@@ -548,7 +552,6 @@
   // Imagem do NS por dia + resumo do último dia; o link do app vai no texto da mensagem
   // (o WhatsApp não torna clicável um link desenhado dentro da imagem).
   const APP_URL = 'https://vivo61991-tech.github.io/co_ns_servico/';
-  const FRASE = 'Acompanhe a evolução diária do Nível de Serviço (NS 5 min): percentual de atendimentos realizados em até 5 minutos, comparado à meta de {meta}.';
   const SEMANA_MIN = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
   const IMG = { W: 1080, H: 1350 };
   // paleta fixa (clara) para a imagem, independente do modo escuro do aparelho
@@ -572,23 +575,43 @@
     return { items, cur, prev, dPP, wd, meta: cur.meta || 0.8, dataRef: snaps[0] && snaps[0].dataRef };
   }
   const ddmm = r => r.inicio.slice(8, 10) + '/' + r.inicio.slice(5, 7);
-  const pct1 = v => (v * 100).toFixed(1).replace('.', ',') + '%';
+  const pct1 = v => p1(v) + '%';
   const ppTxt = v => (v === 0 ? '' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1).replace('.', ',') + ' p.p.';
 
-  const SEMANA_EXT = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
-  // No WhatsApp, *texto* fica em negrito: rótulo em negrito, valor normal
-  function textoCompartilhar(d) {
-    const c = d.cur;
-    const linhas = [
-      '*NS 5 min - B2C Suporte*',
-      '',
-      `*Data:* ${ddmm(c)} (${SEMANA_EXT[d.wd(c)]})`,
-      `*NS do dia:* ${pct1(c.ns)}`,
-      `*Status:* ${stNome(c.status)}`,
-    ];
-    if (d.dPP != null) linhas.push(`*Comparação com o dia anterior:* ${ppTxt(d.dPP)}`);
-    linhas.push('', FRASE.replace('{meta}', pct1(d.meta).replace(',0%', '%')), '', 'Toque no link para abrir o painel completo:', APP_URL);
-    return linhas.join('\n');
+  // Mensagem no formato sugerido pela gerência, ampliado com mês, semana e dia.
+  // Número = TOTAL_ATENDIDAS (dia: do dia; semana/mês: média por dia, para o período aberto
+  // comparar com os fechados). NS em negrito. * = período parcial.
+  const MES_ABR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  const MES_EXT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const Cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+  function rotuloMsg(r) {
+    const ast = r.completo ? '' : '*';
+    const [, m, d] = r.inicio.split('-').map(Number);
+    if (r.tipo === 'MES') return Cap(MES_ABR[m - 1]) + ast;
+    if (r.tipo === 'DIA') return `${String(d).padStart(2, '0')}/${MES_ABR[m - 1]}`;
+    const [, m2, d2] = r.fim.split('-').map(Number);       // semana: 24-30/ago, 31-06/set
+    return `${String(d).padStart(2, '0')}-${String(d2).padStart(2, '0')}/${MES_ABR[m2 - 1]}${ast}`;
+  }
+  function blocoMsg(rows) {
+    const lab = rows.map(rotuloMsg);
+    const num = rows.map(r => fmtInt(r.tipo === 'DIA' ? r.total : Math.round(r.total / (r.dias || 1))));
+    const lw = Math.max(...lab.map(x => x.length)), nw = Math.max(...num.map(x => x.length));
+    return rows.map((r, i) => `▫️ ${lab[i].padEnd(lw)} → ${num[i].padStart(nw)} | *${pct1(r.ns)}*`);
+  }
+  function textoCompartilhar() {
+    const all = [...periodos().values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
+    const por = t => all.filter(r => r.tipo === t && r.ns != null);
+    const meses = por('MES').slice(-LIMITE.MES), semanas = por('SEMANA').slice(-LIMITE.SEMANA), dias = por('DIA').slice(-LIMITE.DIA);
+    const L = ['📊 *Atendidas x NS (5 min)*'];
+    if (meses.length) L.push('', '*Mensal* _(média/dia)_', ...blocoMsg(meses));
+    if (semanas.length) L.push('', '*Semanal* _(média/dia)_', ...blocoMsg(semanas));
+    if (dias.length) {
+      const ms = [...new Set(dias.map(r => +r.inicio.slice(5, 7)))].map(m => MES_EXT[m - 1]);
+      L.push('', `*Diário – ${ms.join('/')}*`, ...blocoMsg(dias));
+    }
+    if ([...meses, ...semanas].some(r => !r.completo)) L.push('', '* _parcial_');
+    L.push('', 'Toque no link para abrir o painel completo:', APP_URL);
+    return L.join('\n');
   }
 
   function svgCompartilhar(d) {
@@ -610,7 +633,7 @@
       const bx = CX0 + i * bw + (bw - w) / 2, yt = y(x.ns ?? lo), rr = Math.min(r, w / 2, CY1 - yt);
       return CY1 - yt <= 0 ? '' : `<path d="M${bx},${CY1} V${yt + rr} A${rr},${rr} 0 0 1 ${bx + rr},${yt} H${bx + w - rr} A${rr},${rr} 0 0 1 ${bx + w},${yt + rr} V${CY1} Z" fill="${PAL[x.status] || PAL.ink3}"/>`;
     }).join('');
-    const vals = it.map((x, i) => x.ns == null ? '' : T(CX0 + i * bw + bw / 2, y(x.ns) - 14, 30, (x.ns * 100).toFixed(1).replace('.', ','), { w: 800, a: 'middle', halo: true }));
+    const vals = it.map((x, i) => x.ns == null ? '' : T(CX0 + i * bw + bw / 2, y(x.ns) - 14, 30, p1(x.ns), { w: 800, a: 'middle', halo: true }));
     const meta = `<line x1="${CX0}" x2="${CX1}" y1="${y(d.meta)}" y2="${y(d.meta)}" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="12 9"/>`;
     const xl = it.map((x, i) => {
       const cx = CX0 + i * bw + bw / 2, dom = d.wd(x) === 0;
@@ -669,7 +692,7 @@
       <div class="row" style="margin-top:10px"><button class="btn sec" id="shBaixar" disabled>Baixar imagem</button><button class="btn sec" id="shCopiar">Copiar mensagem</button></div>
       <button class="btn sec" id="shFechar" style="margin-top:10px">Fechar</button></div>`;
     document.body.appendChild(bg);
-    const texto = textoCompartilhar(d);
+    const texto = textoCompartilhar();
     bg.querySelector('#shMsg').textContent = texto;
     const fechar = () => { bg.remove(); if (urlPrev) URL.revokeObjectURL(urlPrev); };
     bg.addEventListener('click', e => { if (e.target === bg) fechar(); });
@@ -778,5 +801,5 @@
   })();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   $('#bShare').addEventListener('click', abrirCompartilhar);
-  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(dadosCompartilhar()), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
 })();
