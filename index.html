@@ -161,6 +161,13 @@ table.tsel tbody tr.sel td:last-child{border-right-color:var(--selln)}
 .selchip>span:last-child{font-size:15px;line-height:1;font-weight:700}.selchip .t{text-align:left}
 .cap.capsel{color:var(--selink);font-weight:600}
 .chart svg .hit{cursor:pointer}
+/* status com tons mais calmos (cores da empresa clareadas) */
+:root{--verdeS:#BCDD83;--amareloS:#FFC266;--vermelhoS:#F286AF}
+@media (prefers-color-scheme: dark){:root{--verdeS:#8DAE57;--amareloS:#D9A04A;--vermelhoS:#C9668C}}
+/* barras finas pedem um tom a mais para não sumirem no fundo */
+:root{--bar1:var(--p200);--bar2:#A57BCB;--bar3:var(--p700)}
+@media (prefers-color-scheme: dark){:root{--bar1:#4a3466;--bar2:#8549b5;--bar3:#d5bfe7}}
+.legend i{border-radius:3px}
 </style>
 </head>
 <body>

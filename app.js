@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.1.0';
+  const APP_VERSION = '2.2.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -69,6 +69,8 @@
   const fmtData = isoD => isoD ? isoD.slice(8, 10) + '/' + isoD.slice(5, 7) + '/' + isoD.slice(2, 4) : '—';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const NOME = { DIA: 'Dia', SEMANA: 'Semana', MES: 'Mês' };
+  const STATUS = { VERDE: 'Meta atingida', AMARELO: 'Em atenção', VERMELHO: 'Crítico' };
+  const stNome = s => STATUS[s] || s || '';
   function toast(msg, ms = 2600) {
     const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
     setTimeout(() => t.remove(), ms);
@@ -316,7 +318,7 @@
       }
       k = `
         <div class="${kc} wide"><div class="l">${selRow ? 'Dia selecionado' : 'Último dia'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
-          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ` · ${pp(dPP)} vs ${esc(nomePrev(t, prev))}`}</div></div>
+          <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ` · ${pp(dPP)} vs ${esc(nomePrev(t, prev))}`}</div></div>
         ${fCard}
         <div class="kpi"><div class="l">Dias na meta</div><div class="v">${items.filter(d => d.ns >= d.meta).length}/${items.length}</div><div class="s">últimos ${items.length} dias</div></div>
         <div class="${kc} wide"><div class="l">Volume · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
@@ -329,14 +331,14 @@
       k = `
         <div class="${kc} wide"><div class="l">${esc(nomeCur(cur))} ${cur.completo ? `<span class="fechado">${fe}</span>` : `<span class="aberto">${ab}</span>`}${selRow ? ' <span class="selflag">selecionado</span>' : ''}</div>
           <div class="v">${fmtPct(cur.ns)}</div>
-          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
+          <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
         <div class="${kc}"><div class="l">${tFalta}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : (cur.completo ? 'atend. podiam passar de 5 min' : 'atend. podem passar de 5 min')}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
         <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
         <div class="${kc} wide"><div class="l">Volume médio por dia · ${esc(P.rotulo(cur, true))}</div><div class="v">${fmtInt(vd(cur))}</div>
           <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     }
     const tituloNS = t === 'DIA' ? 'NS por dia' : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
-    const legNS = `<div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span>${t === 'DIA' ? '<span><i class="ln" style="border-color:var(--azul)"></i>acumulado do mês</span>' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta</span></div>`;
+    const legNS = `<div class="legend"><span><i style="background:var(--verdeS)"></i>Meta atingida</span><span><i style="background:var(--amareloS)"></i>Em atenção</span><span><i style="background:var(--vermelhoS)"></i>Crítico</span>${t === 'DIA' ? '' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta</span></div>`;
     const cab = t === 'DIA' ? 'DIA' : t === 'SEMANA' ? 'SEMANA' : 'MÊS';
     const dica = 'Toque numa coluna para selecionar · toque de novo para limpar.';
     const cap = selRow ? esc(detalhe(selRow)) : dica;
@@ -357,7 +359,7 @@
 
   // ---------------- Gráficos (SVG) ----------------
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
-  const corStatus = s => s === 'VERDE' ? css('--verde') : s === 'AMARELO' ? css('--amarelo') : css('--vermelho');
+  const corStatus = s => s === 'VERDE' ? css('--verdeS') : s === 'AMARELO' ? css('--amareloS') : css('--vermelhoS');
   // rótulo com contorno da cor do card: legível sobre barra, linha ou grade
   const halo = () => `paint-order="stroke" stroke="${css('--card')}" stroke-width="3" stroke-linejoin="round"`;
   function numCurto(v, largo) {
@@ -380,66 +382,61 @@
         <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${s ? css('--selink') : d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo && !s ? 400 : 700}">${d.dias}d</text>`;
     }).join('');
   }
+  // barra fina com o topo arredondado (raio = metade da largura)
+  function barra(x, yTop, w, yBase, fill, extra = '') {
+    const h = Math.max(0, yBase - yTop); if (h <= 0) return '';
+    const r = Math.min(w / 2, h);
+    return `<path d="M${x},${yBase} V${yTop + r} A${r},${r} 0 0 1 ${x + w},${yTop + r} V${yBase} Z" fill="${fill}" ${extra}/>`;
+  }
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
     const W = 360, H = mensal ? 220 : 216, L = 30, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
     const meta = items[items.length - 1].meta || 0.8;
     const vals = items.map(d => d.ns ?? 0);
-    // acumulado do mês (dias): reinicia quando muda o mês
-    let acc = 0, accT = 0, mes = null;
-    const cum = t === 'DIA' ? items.map(d => { const m = d.inicio.slice(0, 7); if (m !== mes) { mes = m; acc = 0; accT = 0; } acc += d.ate; accT += d.total; return accT ? acc / accT : null; }) : [];
-    const lo = Math.max(0, Math.floor((Math.min(...vals, ...cum.filter(v => v != null), meta) - 0.05) * 10) / 10), hi = 1;
+    const lo = Math.max(0, Math.floor((Math.min(...vals, meta) - 0.05) * 10) / 10), hi = 1;
     const y = v => T + ih - (v - lo) / (hi - lo) * ih;
-    const bw = iw / items.length, gap = mensal ? Math.min(16, bw * 0.3) : Math.min(6, bw * 0.25);
+    const bw = iw / items.length;
+    const w = Math.max(6, Math.min(16, bw * 0.38));   // barras finas
     let g = '';
     for (let v = lo; v <= hi + 1e-9; v += 0.1) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${Math.round(v * 100)}</text>`;
     const bars = items.map((d, i) => {
-      const x = L + i * bw + gap / 2, w = bw - gap, h = Math.max(1, y(lo) - y(d.ns ?? lo));
-      const hatch = !d.completo ? `<rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="3" fill="url(#hatch)"/>` : '';
-      return `<g${opac(d)}><rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="${mensal ? 3 : 2}" fill="${corStatus(d.status)}"/>${hatch}</g>`;
+      const x = L + i * bw + (bw - w) / 2, yt = y(d.ns ?? lo), yb = y(lo);
+      return `<g${opac(d)}>${barra(x, yt, w, yb, corStatus(d.status))}${!d.completo ? barra(x, yt, w, yb, 'url(#hatch)') : ''}</g>`;
     }).join('');
-    // valores em todas as colunas (inclusive no modo Dia)
     const fs = bw >= 34 ? 10.5 : bw >= 24 ? 9 : 7.5;
     const vl = items.map((d, i) => d.ns == null ? '' : `<text class="vlab" x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${d.ordem === sel ? fs + 1 : fs}" font-weight="800" text-anchor="middle" fill="${d.ordem === sel ? css('--selink') : css('--ink')}" ${halo()}${opac(d)}>${(d.ns * 100).toFixed(1).replace('.', ',')}</text>`).join('');
-    const line = cum.length ? `<path d="${cum.map((v, i) => `${i && items[i].inicio.slice(0, 7) === items[i - 1].inicio.slice(0, 7) ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2" opacity="${sel ? .55 : 1}"/>
-      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"${opac(items[i])}/>`).join('')}` : '';
     const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS">
-      <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".45"/></pattern></defs>
+      <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".5"/></pattern></defs>
       ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
-      ${line}${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+      ${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
-  // Volume / atendidas / ≤5min, com os três números em cada coluna
+  // Volume / atendidas / ≤5min: três barras finas lado a lado, mesma largura; só o volume (total) tem rótulo
   function chartVol(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = mensal ? 236 : 226, L = 38, R = 8, T = 36, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = mensal ? 226 : 216, L = 38, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
     const k = d => mensal ? 1 / (d.dias || 1) : 1;
     const max = Math.max(...items.map(d => d.volume * k(d))) * 1.02 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
-    const bw = iw / items.length, gap = mensal ? Math.min(16, bw * 0.3) : Math.min(6, bw * 0.25);
-    const largo = bw >= 40;            // espaço para o número inteiro (ex.: 6.208); senão 6,2k
-    const fs = bw >= 34 ? 9.5 : bw >= 24 ? 8.5 : 7.5, lh = fs + 2.5;
+    const bw = iw / items.length;
+    const esp = Math.max(1.5, Math.min(3, bw * 0.05));               // espaço entre as 3 barras
+    const w = Math.max(3, Math.min(9, (bw * 0.72 - 2 * esp) / 3));   // largura de cada barra
+    const gw = 3 * w + 2 * esp;
+    const largo = bw >= 40;
+    const fs = bw >= 34 ? 9.5 : bw >= 24 ? 8.5 : 7.5;
     let g = '';
     for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
-    const bars = items.map((d, i) => { const x = L + i * bw + gap / 2, w = bw - gap, f = k(d);
-      return `<g${opac(d)}><rect x="${x}" y="${y(d.volume * f)}" width="${w}" height="${y(0) - y(d.volume * f)}" rx="2" fill="${css('--bar1')}"/>
-        <rect x="${x + w * 0.15}" y="${y(d.total * f)}" width="${w * 0.7}" height="${y(0) - y(d.total * f)}" rx="1.5" fill="${css('--bar2')}"/>
-        <rect x="${x + w * 0.3}" y="${y(d.ate * f)}" width="${w * 0.4}" height="${y(0) - y(d.ate * f)}" rx="1" fill="${css('--bar3')}"/></g>`; }).join('');
-    // rótulos: volume acima da coluna, atendidas e ≤5 min no topo das suas barras,
-    // empurrados para não se sobreporem (e para cima se a barra for baixa demais)
-    const labs = items.map((d, i) => {
-      const f = k(d), cx = L + i * bw + bw / 2;
-      let yv = y(d.volume * f) - 3, ya = y(d.total * f) + fs, y5 = y(d.ate * f) + fs;
-      ya = Math.max(ya, yv + lh); y5 = Math.max(y5, ya + lh);
-      const base = y(0) - 2;
-      if (y5 > base) { const sh = y5 - base; yv -= sh; ya -= sh; y5 -= sh; }
-      const s = d.ordem === sel;
-      const t1 = (v, yy, cor, w8) => `<text x="${cx}" y="${yy.toFixed(1)}" font-size="${s ? fs + .5 : fs}" font-weight="${w8}" text-anchor="middle" fill="${cor}" ${halo()}>${numCurto(v, largo)}</text>`;
-      return `<g class="vlab"${opac(d)}>${t1(d.volume * f, yv, css('--ink2'), 600)}${t1(d.total * f, ya, css('--p500'), 700)}${t1(d.ate * f, y5, css('--p700'), 800)}</g>`;
+    const bars = items.map((d, i) => {
+      const x0 = L + i * bw + (bw - gw) / 2, f = k(d), yb = y(0);
+      return `<g class="grp"${opac(d)}>${barra(x0, y(d.volume * f), w, yb, css('--bar1'), 'class="b-vol"')}${barra(x0 + w + esp, y(d.total * f), w, yb, css('--bar2'), 'class="b-at"')}${barra(x0 + 2 * (w + esp), y(d.ate * f), w, yb, css('--bar3'), 'class="b-5"')}</g>`;
     }).join('');
-    const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 30}" width="${bw}" height="${ih + B + 30}" fill="transparent"/>`).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${faixaSel(items, L, bw, T - 16, ih + B + 16)}${g}${bars}${labs}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+    const labs = items.map((d, i) => {
+      const s = d.ordem === sel, f = k(d);
+      return `<text class="vlab" x="${L + i * bw + bw / 2}" y="${(y(d.volume * f) - 5).toFixed(1)}" font-size="${s ? fs + .5 : fs}" font-weight="700" text-anchor="middle" fill="${s ? css('--selink') : css('--ink2')}" ${halo()}${opac(d)}>${numCurto(d.volume * f, largo)}</text>`;
+    }).join('');
+    const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${faixaSel(items, L, bw, T, ih + B)}${g}${bars}${labs}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
   function bindTaps(items) {
     ['#ch1', '#ch2'].forEach(s => {
