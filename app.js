@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.5.0';
+  const APP_VERSION = '2.6.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -92,6 +92,7 @@
     render(); window.scrollTo(0, 0);
   }
   function render() {
+    main.classList.toggle('modo-painel', view === 'painel');
     if (view === 'painel') renderPainel();
     else if (view === 'dados') preview ? renderPreview() : renderDados();
     else renderHist();
@@ -242,7 +243,82 @@
   // passam a mostrar esse período comparado ao anterior. Tocar de novo no selecionado limpa
   // a seleção e os cards voltam ao último período.
   let sel = null; // ORDEM do período selecionado no modo atual
-  const setModo = m => { modo = m; sel = null; try { localStorage.setItem('ns-modo', m); } catch (e) {} renderPainel(); };
+  const ORDEM_MODOS = ['DIA', 'SEMANA', 'MES'];
+  let modosDisp = ORDEM_MODOS.slice();
+  const semAnim = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // troca de modo com efeito de "passar página"; dir = +1 (veio da direita) / -1 (veio da esquerda)
+  function setModo(m, dir) {
+    if (dir == null) dir = Math.sign(ORDEM_MODOS.indexOf(m) - ORDEM_MODOS.indexOf(modo)) || 1;
+    modo = m; sel = null;
+    try { localStorage.setItem('ns-modo', m); } catch (e) {}
+    const y = window.scrollY;
+    renderPainel();
+    window.scrollTo(0, y);
+    const pag = $('#pag');
+    if (!pag || semAnim()) return;
+    pag.style.transition = 'none';
+    pag.style.transform = `translateX(${dir * 38}%)`;
+    pag.style.opacity = '0';
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      pag.style.transition = 'transform .24s cubic-bezier(.2,.8,.2,1), opacity .24s';
+      pag.style.transform = ''; pag.style.opacity = '';
+    }));
+  }
+  function dicaArrastar() {
+    try { if (localStorage.getItem('ns-dica-arrastar')) return; localStorage.setItem('ns-dica-arrastar', '1'); } catch (e) { return; }
+    if (modosDisp.length > 1) setTimeout(() => toast('Dica: arraste para o lado para trocar entre Dia, Semana e Mês', 4000), 600);
+  }
+  // modo vizinho disponível (step +1 = próximo, -1 = anterior), ou null
+  function vizinho(step) {
+    const i = ORDEM_MODOS.indexOf(modo);
+    for (let k = i + step; k >= 0 && k < ORDEM_MODOS.length; k += step) if (modosDisp.includes(ORDEM_MODOS[k])) return ORDEM_MODOS[k];
+    return null;
+  }
+  // arrastar para o lado em qualquer ponto do painel troca Dia ⇄ Semana ⇄ Mês
+  (function gestoArrastar() {
+    let st = null, acabouDeArrastar = false;
+    main.addEventListener('pointerdown', e => {
+      if (view !== 'painel' || e.pointerType === 'mouse' || !e.isPrimary || document.querySelector('.sheet-bg')) return;
+      const pag = $('#pag'); if (!pag) return;
+      st = { x: e.clientX, y: e.clientY, id: e.pointerId, dir: null, dx: 0, pag };
+    });
+    main.addEventListener('pointermove', e => {
+      if (!st || e.pointerId !== st.id) return;
+      const dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (!st.dir) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        st.dir = Math.abs(dx) > Math.abs(dy) * 1.2 ? 'h' : 'v';
+        if (st.dir === 'h') st.pag.style.transition = 'none';
+      }
+      if (st.dir !== 'h') return;
+      st.dx = dx;
+      const alvo = vizinho(dx < 0 ? 1 : -1);
+      const mov = alvo ? dx : dx * 0.22; // sem vizinho: só um "elástico"
+      st.pag.style.transform = `translateX(${mov}px)`;
+      st.pag.style.opacity = String(1 - Math.min(0.45, Math.abs(mov) / 700));
+    });
+    const fim = e => {
+      if (!st || e.pointerId !== st.id) return;
+      const s = st; st = null;
+      if (s.dir !== 'h') return;
+      acabouDeArrastar = true; setTimeout(() => { acabouDeArrastar = false; }, 350);
+      const W = main.clientWidth, step = s.dx < 0 ? 1 : -1, alvo = vizinho(step);
+      if (alvo && Math.abs(s.dx) > Math.min(70, W * 0.18)) {
+        if (semAnim()) { setModo(alvo, step); return; }
+        s.pag.style.transition = 'transform .14s ease-in, opacity .14s';
+        s.pag.style.transform = `translateX(${-step * W * 0.6}px)`;
+        s.pag.style.opacity = '0';
+        setTimeout(() => setModo(alvo, step), 140);
+      } else {
+        s.pag.style.transition = 'transform .22s cubic-bezier(.2,.8,.2,1), opacity .22s';
+        s.pag.style.transform = ''; s.pag.style.opacity = '';
+      }
+    };
+    main.addEventListener('pointerup', fim);
+    main.addEventListener('pointercancel', fim);
+    // depois de arrastar, o "clique" que o navegador gera não deve selecionar coluna
+    main.addEventListener('click', e => { if (acabouDeArrastar) { e.stopPropagation(); e.preventDefault(); } }, true);
+  })();
   function toggleSel(ordem) {
     const y = window.scrollY;
     sel = sel === ordem ? null : ordem;
@@ -299,7 +375,9 @@
         <div class="meta-line" style="margin-top:10px"><span>Dados até <b>${fmtData(s0.dataRef)}</b></span><span>${s0.origem === 'publicado' ? 'publicado' : 'importado'} ${fmtDT(s0.publicadoEm || s0.id)}</span></div>
         ${selRow ? `<button class="selchip" id="bLimpar" aria-label="Limpar seleção"><span class="t">Selecionado: <b>${esc(P.rotulo(selRow))}</b> · toque para limpar</span><span aria-hidden="true">✕</span></button>` : ''}
       </div>
-      ${painelTipo(modo, items, serie, all)}`;
+      <div id="pag">${painelTipo(modo, items, serie, all)}</div>`;
+    modosDisp = ORDEM_MODOS.filter(t => por(t).length);
+    dicaArrastar();
     main.querySelectorAll('.seg button').forEach(b => b.onclick = () => { if (b.dataset.m !== modo) setModo(b.dataset.m); });
     if ($('#bLimpar')) $('#bLimpar').onclick = () => toggleSel(sel);
     bindTaps(items);

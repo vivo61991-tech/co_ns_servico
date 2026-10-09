@@ -172,6 +172,11 @@ table.tsel tbody tr.sel td:last-child{border-right-color:var(--selln)}
 .dlt{font-variant-numeric:tabular-nums;white-space:nowrap}
 .dlt.up{color:#5F8A12} .dlt.down{color:#D0256A} .dlt.neu{color:var(--ink2)} .dlt.vol{color:var(--ink2);font-weight:600}
 @media (prefers-color-scheme: dark){.dlt.up{color:#B6E05A}.dlt.down{color:#FF6FA5}}
+/* arrastar para trocar Dia/Semana/Mês */
+html,body{overflow-x:hidden}
+/* inclui os contêineres das tabelas (com rolagem horizontal o navegador "roubava" o gesto) */
+#main.modo-painel,#main.modo-painel *{touch-action:pan-y pinch-zoom}
+#pag{will-change:transform}
 </style>
 </head>
 <body>
