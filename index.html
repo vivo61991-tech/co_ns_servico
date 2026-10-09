@@ -148,6 +148,19 @@ h3.sub{font-size:13px;margin:14px 0 4px;color:var(--ink2);text-transform:upperca
 code{font:12.5px ui-monospace,Menlo,Consolas,monospace;background:var(--p50);padding:1px 5px;border-radius:5px}
 @media (prefers-color-scheme: dark){code{background:#2a1c3d}}
 @media (max-width:375px){table.conf{font-size:12px;letter-spacing:-.3px}table.conf td{padding:8px 3px}table.conf th{padding:0 3px;font-size:10px}table.conf .pill{padding:2px 5px}}
+/* seleção — toque bem clarinho do laranja #FF9901 */
+:root{--selbg:#FFF4E3;--selln:#FFD9A0;--selink:#B86A00}
+@media (prefers-color-scheme: dark){:root{--selbg:rgba(255,153,1,.13);--selln:rgba(255,153,1,.45);--selink:#FFB547}}
+table.tsel tbody tr{cursor:pointer}
+table.tsel tbody tr.sel td{background:var(--selbg);border-top-color:var(--selln);border-bottom-color:var(--selln)}
+table.tsel tbody tr.sel td:first-child{border-left-color:var(--selln);box-shadow:inset 3px 0 0 #FF9901;color:var(--selink)}
+table.tsel tbody tr.sel td:last-child{border-right-color:var(--selln)}
+.kpi.ksel{border-color:var(--selln);background:linear-gradient(0deg,var(--selbg),var(--selbg)),var(--card)}
+.selflag{font-size:11px;font-weight:700;padding:1px 7px;border-radius:6px;background:var(--selbg);color:var(--selink);border:1px solid var(--selln);margin-left:4px;vertical-align:1px}
+.selchip{margin-top:10px;display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:1px solid var(--selln);background:var(--selbg);color:var(--selink);border-radius:10px;padding:8px 12px;font:600 13px system-ui;cursor:pointer}
+.selchip>span:last-child{font-size:15px;line-height:1;font-weight:700}.selchip .t{text-align:left}
+.cap.capsel{color:var(--selink);font-weight:600}
+.chart svg .hit{cursor:pointer}
 </style>
 </head>
 <body>

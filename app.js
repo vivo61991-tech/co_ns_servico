@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.0.0';
+  const APP_VERSION = '2.1.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -84,6 +84,7 @@
     go(b.dataset.v);
   });
   function go(v) {
+    if (v !== 'painel' || view !== 'painel') sel = null; // seleção vale só enquanto se está no painel
     view = v;
     document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
     render(); window.scrollTo(0, 0);
@@ -235,7 +236,17 @@
   }
 
   // ---------------- Painel ----------------
-  const setModo = m => { modo = m; try { localStorage.setItem('ns-modo', m); } catch (e) {} renderPainel(); };
+  // Seleção: tocar numa coluna (gráficos) ou linha (tabela) seleciona o período; os cards
+  // passam a mostrar esse período comparado ao anterior. Tocar de novo no selecionado limpa
+  // a seleção e os cards voltam ao último período.
+  let sel = null; // ORDEM do período selecionado no modo atual
+  const setModo = m => { modo = m; sel = null; try { localStorage.setItem('ns-modo', m); } catch (e) {} renderPainel(); };
+  function toggleSel(ordem) {
+    const y = window.scrollY;
+    sel = sel === ordem ? null : ordem;
+    renderPainel();
+    window.scrollTo(0, y);
+  }
   const LIMITE = { DIA: 14, SEMANA: 12, MES: 12 };
   function metaFalta(tot, ate, meta) {
     const ns = tot > 0 ? ate / tot : null;
@@ -245,6 +256,12 @@
   const diasTxt = r => r.completo ? `${r.dias} dias` : `${r.dias} de ${r.diasPeriodo} dias`;
   const pp = v => (v >= 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' p.p.';
   const pc = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1).replace('.', ',') + '%';
+  const nomePrev = (t, r) => !r ? 'anterior' : t === 'DIA' ? P.rotulo(r) : P.rotulo(r, true).replace('*', '');
+  function detalhe(d) {
+    const ex = d.extras && Object.keys(d.extras).length ? ' · ' + Object.entries(d.extras).map(([c, v]) => `${c} ${typeof v === 'number' ? String(v).replace('.', ',') : v}`).join(' · ') : '';
+    const base = `${P.rotulo(d)}${d.tipo === 'DIA' ? '' : ` (${diasTxt(d)})`} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)}`;
+    return base + (d.tipo === 'DIA' ? '' : ` (${fmtInt(d.volume / d.dias)}/dia)`) + ex;
+  }
 
   function renderPainel() {
     const per = periodos();
@@ -256,64 +273,84 @@
     }
     const all = [...per.values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
     const por = t => all.filter(r => r.tipo === t);
-    if (!por(modo).length) modo = ['DIA', 'SEMANA', 'MES'].find(t => por(t).length);
-    const items = por(modo).slice(-LIMITE[modo]);
+    if (!por(modo).length) { modo = ['DIA', 'SEMANA', 'MES'].find(t => por(t).length); sel = null; }
+    const serie = por(modo);
+    const items = serie.slice(-LIMITE[modo]);
+    if (sel && !items.some(r => r.ordem === sel)) sel = null; // período saiu da janela/dados
     const s0 = snaps[0];
+    const selRow = sel ? items.find(r => r.ordem === sel) : null;
     main.innerHTML = `${pubErr}
       <div class="card topbar">
         <div class="seg" role="tablist" aria-label="TIPO_PERIODO">
           ${['DIA', 'SEMANA', 'MES'].map(t => `<button role="tab" data-m="${t}" class="${modo === t ? 'on' : ''}" ${por(t).length ? '' : 'disabled'}>${NOME[t]}</button>`).join('')}
         </div>
         <div class="meta-line" style="margin-top:10px"><span>Dados até <b>${fmtData(s0.dataRef)}</b></span><span>${s0.origem === 'publicado' ? 'publicado' : 'importado'} ${fmtDT(s0.publicadoEm || s0.id)}</span></div>
+        ${selRow ? `<button class="selchip" id="bLimpar" aria-label="Limpar seleção"><span class="t">Selecionado: <b>${esc(P.rotulo(selRow))}</b> · toque para limpar</span><span aria-hidden="true">✕</span></button>` : ''}
       </div>
-      ${painelTipo(modo, items, all)}`;
+      ${painelTipo(modo, items, serie, all)}`;
     main.querySelectorAll('.seg button').forEach(b => b.onclick = () => { if (b.dataset.m !== modo) setModo(b.dataset.m); });
+    if ($('#bLimpar')) $('#bLimpar').onclick = () => toggleSel(sel);
     bindTaps(items);
   }
 
-  function painelTipo(t, items, all) {
-    const cur = items[items.length - 1], prev = items.length > 1 ? items[items.length - 2] : null;
+  function painelTipo(t, items, serie, all) {
+    const selRow = sel ? items.find(r => r.ordem === sel) : null;
+    const cur = selRow || items[items.length - 1];
+    const ic = serie.indexOf(cur);
+    const prev = ic > 0 ? serie[ic - 1] : null;
     const meta = cur.meta || 0.8;
     const dPP = prev && cur.ns != null && prev.ns != null ? (cur.ns - prev.ns) * 100 : null;
+    const kc = selRow ? 'kpi ksel' : 'kpi';
     let k = '';
     if (t === 'DIA') {
-      const mesAberto = all.filter(r => r.tipo === 'MES' && !r.completo).slice(-1)[0] || all.filter(r => r.tipo === 'MES').slice(-1)[0];
-      const f = mesAberto ? metaFalta(mesAberto.total, mesAberto.ate, mesAberto.meta) : null;
       const dVol = prev ? cur.volume / prev.volume - 1 : null;
+      let fCard;
+      if (selRow) {
+        // dia selecionado: quanto faltou (ou sobrou) naquele dia
+        const f = metaFalta(cur.total, cur.ate, meta);
+        fCard = `<div class="${kc}"><div class="l">${f.falta ? 'Faltaram p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min no dia' : 'atend. podiam passar de 5 min'}</div></div>`;
+      } else {
+        const mesAberto = all.filter(r => r.tipo === 'MES' && !r.completo).slice(-1)[0] || all.filter(r => r.tipo === 'MES').slice(-1)[0];
+        const f = mesAberto ? metaFalta(mesAberto.total, mesAberto.ate, mesAberto.meta) : null;
+        fCard = f ? `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(mesAberto, true))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'} · NS ${fmtPct(f.ns)}</div></div>` : '';
+      }
       k = `
-        <div class="kpi wide"><div class="l">Último dia · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
-          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ' · ' + pp(dPP) + ' vs dia anterior'}</div></div>
-        ${f ? `<div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'} · ${esc(P.rotulo(mesAberto, true))}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'} · NS ${fmtPct(f.ns)}</div></div>` : ''}
+        <div class="${kc} wide"><div class="l">${selRow ? 'Dia selecionado' : 'Último dia'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
+          <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ` · ${pp(dPP)} vs ${esc(nomePrev(t, prev))}`}</div></div>
+        ${fCard}
         <div class="kpi"><div class="l">Dias na meta</div><div class="v">${items.filter(d => d.ns >= d.meta).length}/${items.length}</div><div class="s">últimos ${items.length} dias</div></div>
-        <div class="kpi wide"><div class="l">Volume do dia</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ' · ' + pc(dVol) + ' vs dia anterior'}</div></div>`;
+        <div class="${kc} wide"><div class="l">Volume · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     } else {
       const f = metaFalta(cur.total, cur.ate, meta);
       const vd = r => r.volume / r.dias;
       const dVol = prev ? vd(cur) / vd(prev) - 1 : null;
       const ab = t === 'MES' ? 'mês aberto' : 'semana aberta', fe = t === 'MES' ? 'fechado' : 'fechada';
+      const tFalta = f.falta ? (cur.completo ? 'Faltaram p/ meta' : 'Faltam p/ meta') : 'Folga na meta';
       k = `
-        <div class="kpi wide"><div class="l">${esc(nomeCur(cur))} ${cur.completo ? `<span class="fechado">${fe}</span>` : `<span class="aberto">${ab}</span>`}</div>
+        <div class="${kc} wide"><div class="l">${esc(nomeCur(cur))} ${cur.completo ? `<span class="fechado">${fe}</span>` : `<span class="aberto">${ab}</span>`}${selRow ? ' <span class="selflag">selecionado</span>' : ''}</div>
           <div class="v">${fmtPct(cur.ns)}</div>
           <div class="s"><span class="pill ${cur.status}">${cur.status}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
-        <div class="kpi"><div class="l">${f.falta ? 'Faltam p/ meta' : 'Folga na meta'}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : 'atend. podem passar de 5 min'}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
-        <div class="kpi"><div class="l">vs ${prev ? esc(P.rotulo(prev, true).replace('*', '')) : 'anterior'}</div><div class="v">${dPP == null ? '—' : pp(dPP)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
-        <div class="kpi wide"><div class="l">Volume médio por dia</div><div class="v">${fmtInt(vd(cur))}</div>
-          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(P.rotulo(prev, true).replace('*', ''))}`}</div></div>`;
+        <div class="${kc}"><div class="l">${tFalta}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : (cur.completo ? 'atend. podiam passar de 5 min' : 'atend. podem passar de 5 min')}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
+        <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
+        <div class="${kc} wide"><div class="l">Volume médio por dia · ${esc(P.rotulo(cur, true))}</div><div class="v">${fmtInt(vd(cur))}</div>
+          <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     }
     const tituloNS = t === 'DIA' ? 'NS por dia' : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
     const legNS = `<div class="legend"><span><i style="background:var(--verde)"></i>≥ meta</span><span><i style="background:var(--amarelo)"></i>≥ 70%</span><span><i style="background:var(--vermelho)"></i>&lt; 70%</span>${t === 'DIA' ? '<span><i class="ln" style="border-color:var(--azul)"></i>acumulado do mês</span>' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta</span></div>`;
     const cab = t === 'DIA' ? 'DIA' : t === 'SEMANA' ? 'SEMANA' : 'MÊS';
+    const dica = 'Toque numa coluna para selecionar · toque de novo para limpar.';
+    const cap = selRow ? esc(detalhe(selRow)) : dica;
     return `
       <div class="kpis">${k}</div>
       <div style="height:12px"></div>
       <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
-        <div class="cap" id="cap1">${t === 'DIA' ? 'Toque numa barra para ver o dia.' : 'Abaixo de cada barra: QUANTIDADE_DIAS. Toque para detalhes.'}</div></div>
+        <div class="cap${selRow ? ' capsel' : ''}" id="cap1">${cap}</div></div>
       <div class="card chart"><h2>${t === 'DIA' ? 'Volume e atendimento por dia' : 'Volume médio por dia'}</h2>${chartVol(items, t)}
         <div class="legend"><span><i style="background:var(--bar1)"></i>volume${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar2)"></i>atendidas${t === 'DIA' ? '' : '/dia'}</span><span><i style="background:var(--bar3)"></i>até 5 min${t === 'DIA' ? '' : '/dia'}</span></div>
-        <div class="cap" id="cap2">${t === 'DIA' ? 'Toque numa barra para ver o dia.' : 'Dividido pela QUANTIDADE_DIAS, para comparar o período aberto com os fechados.'}</div></div>
-      <div class="card"><h2>${t === 'DIA' ? 'Dias' : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+        <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? dica : 'Dividido pela QUANTIDADE_DIAS, para comparar o período aberto com os fechados. ' + dica)}</div></div>
+      <div class="card"><h2>${t === 'DIA' ? 'Dias' : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf tsel">
         <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>VOLUME</th><th>ATEND.</th><th>≤5MIN</th><th>NS</th></tr></thead><tbody>
-        ${[...items].reverse().map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
+        ${[...items].reverse().map(r => `<tr data-ordem="${r.ordem}" class="${r.ordem === sel ? 'sel' : ''}" aria-selected="${r.ordem === sel}"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
           <td>${fmtInt(r.volume)}</td><td>${fmtInt(r.total)}</td><td>${fmtInt(r.ate)}</td><td><span class="pill ${r.status}">${fmtPct(r.ns)}</span></td></tr>`).join('')}</tbody></table></div>
         ${t === 'DIA' ? '' : `<div class="small muted" style="margin-top:6px">${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; os totais cobrem só esses dias.</div>`}</div>`;
   }
@@ -321,18 +358,31 @@
   // ---------------- Gráficos (SVG) ----------------
   const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
   const corStatus = s => s === 'VERDE' ? css('--verde') : s === 'AMARELO' ? css('--amarelo') : css('--vermelho');
+  // rótulo com contorno da cor do card: legível sobre barra, linha ou grade
+  const halo = () => `paint-order="stroke" stroke="${css('--card')}" stroke-width="3" stroke-linejoin="round"`;
+  function numCurto(v, largo) {
+    if (largo) return fmtInt(v);
+    if (v >= 1000) return (v / 1000).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + 'k';
+    return String(Math.round(v));
+  }
+  function faixaSel(items, L, bw, T, h) {
+    const i = items.findIndex(r => r.ordem === sel);
+    return i < 0 ? '' : `<rect class="selband" x="${L + i * bw + 1}" y="${T - 14}" width="${bw - 2}" height="${h + 14}" rx="6" fill="${css('--selbg')}" stroke="${css('--selln')}" stroke-width="1"/>`;
+  }
+  const opac = r => sel && r.ordem !== sel ? ' opacity=".42"' : '';
   function xLabels(items, t, L, bw, H) {
     const step = Math.ceil(items.length / (t === 'DIA' ? 14 : 12));
     return items.map((d, i) => {
-      const cx = L + i * bw + bw / 2;
-      if (t === 'DIA') return i % step === 0 || i === items.length - 1 ? `<text x="${cx}" y="${H - 8}" font-size="10" text-anchor="middle" fill="${css('--ink2')}">${P.rotulo(d, true)}</text>` : '';
-      return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="600" text-anchor="middle" fill="${css('--ink2')}">${P.rotulo(d, true)}</text>
-        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo ? 400 : 700}">${d.dias}d</text>`;
+      const cx = L + i * bw + bw / 2, s = d.ordem === sel;
+      const cor = s ? css('--selink') : css('--ink2');
+      if (t === 'DIA') return i % step === 0 || i === items.length - 1 || s ? `<text x="${cx}" y="${H - 8}" font-size="10" font-weight="${s ? 800 : 400}" text-anchor="middle" fill="${cor}">${P.rotulo(d, true)}</text>` : '';
+      return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${cor}">${P.rotulo(d, true)}</text>
+        <text x="${cx}" y="${H - 8}" font-size="9.5" text-anchor="middle" fill="${s ? css('--selink') : d.completo ? css('--ink3') : css('--user')}" font-weight="${d.completo && !s ? 400 : 700}">${d.dias}d</text>`;
     }).join('');
   }
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = mensal ? 214 : 210, L = 30, R = 8, T = 18, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = mensal ? 220 : 216, L = 30, R = 8, T = 24, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
     const meta = items[items.length - 1].meta || 0.8;
     const vals = items.map(d => d.ns ?? 0);
     // acumulado do mês (dias): reinicia quando muda o mês
@@ -346,44 +396,57 @@
     const bars = items.map((d, i) => {
       const x = L + i * bw + gap / 2, w = bw - gap, h = Math.max(1, y(lo) - y(d.ns ?? lo));
       const hatch = !d.completo ? `<rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="3" fill="url(#hatch)"/>` : '';
-      return `<rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="${mensal ? 3 : 2}" fill="${corStatus(d.status)}"/>${hatch}`;
+      return `<g${opac(d)}><rect x="${x}" y="${y(d.ns ?? lo)}" width="${w}" height="${h}" rx="${mensal ? 3 : 2}" fill="${corStatus(d.status)}"/>${hatch}</g>`;
     }).join('');
-    const vl = items.length <= 12 ? items.map((d, i) => d.ns == null ? '' : `<text x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="700" text-anchor="middle" fill="${css('--ink')}">${(d.ns * 100).toFixed(t === 'DIA' && items.length > 8 ? 0 : 1).replace('.', ',')}</text>`).join('') : '';
-    const line = cum.length ? `<path d="${cum.map((v, i) => `${i && items[i].inicio.slice(0, 7) === items[i - 1].inicio.slice(0, 7) ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2"/>
-      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"/>`).join('')}` : '';
-    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
+    // valores em todas as colunas (inclusive no modo Dia)
+    const fs = bw >= 34 ? 10.5 : bw >= 24 ? 9 : 7.5;
+    const vl = items.map((d, i) => d.ns == null ? '' : `<text class="vlab" x="${L + i * bw + bw / 2}" y="${y(d.ns) - 5}" font-size="${d.ordem === sel ? fs + 1 : fs}" font-weight="800" text-anchor="middle" fill="${d.ordem === sel ? css('--selink') : css('--ink')}" ${halo()}${opac(d)}>${(d.ns * 100).toFixed(1).replace('.', ',')}</text>`).join('');
+    const line = cum.length ? `<path d="${cum.map((v, i) => `${i && items[i].inicio.slice(0, 7) === items[i - 1].inicio.slice(0, 7) ? 'L' : 'M'}${(L + i * bw + bw / 2).toFixed(1)},${y(v).toFixed(1)}`).join('')}" fill="none" stroke="${css('--azul')}" stroke-width="2.2" opacity="${sel ? .55 : 1}"/>
+      ${cum.map((v, i) => `<circle cx="${L + i * bw + bw / 2}" cy="${y(v)}" r="2.6" fill="${css('--azul')}"${opac(items[i])}/>`).join('')}` : '';
+    const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS">
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".45"/></pattern></defs>
-      ${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
-      ${line}${t === 'DIA' && cum.length ? '' : vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+      ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
+      ${line}${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
+  // Volume / atendidas / ≤5min, com os três números em cada coluna
   function chartVol(items, t) {
     const mensal = t !== 'DIA';
-    const W = 360, H = mensal ? 214 : 200, L = 38, R = 8, T = 10, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
+    const W = 360, H = mensal ? 236 : 226, L = 38, R = 8, T = 36, B = mensal ? 40 : 26, iw = W - L - R, ih = H - T - B;
     const k = d => mensal ? 1 / (d.dias || 1) : 1;
-    const max = Math.max(...items.map(d => d.volume * k(d))) * 1.05 || 1;
+    const max = Math.max(...items.map(d => d.volume * k(d))) * 1.02 || 1;
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
     const bw = iw / items.length, gap = mensal ? Math.min(16, bw * 0.3) : Math.min(6, bw * 0.25);
+    const largo = bw >= 40;            // espaço para o número inteiro (ex.: 6.208); senão 6,2k
+    const fs = bw >= 34 ? 9.5 : bw >= 24 ? 8.5 : 7.5, lh = fs + 2.5;
     let g = '';
     for (let v = 0; v <= max; v += stepV) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="${css('--line')}"/><text x="${L - 4}" y="${y(v) + 4}" font-size="10" text-anchor="end" fill="${css('--ink3')}">${v >= 1000 ? (v / 1000).toLocaleString('pt-BR') + 'k' : Math.round(v)}</text>`;
     const bars = items.map((d, i) => { const x = L + i * bw + gap / 2, w = bw - gap, f = k(d);
-      return `<rect x="${x}" y="${y(d.volume * f)}" width="${w}" height="${y(0) - y(d.volume * f)}" rx="2" fill="${css('--bar1')}"/>
+      return `<g${opac(d)}><rect x="${x}" y="${y(d.volume * f)}" width="${w}" height="${y(0) - y(d.volume * f)}" rx="2" fill="${css('--bar1')}"/>
         <rect x="${x + w * 0.15}" y="${y(d.total * f)}" width="${w * 0.7}" height="${y(0) - y(d.total * f)}" rx="1.5" fill="${css('--bar2')}"/>
-        <rect x="${x + w * 0.3}" y="${y(d.ate * f)}" width="${w * 0.4}" height="${y(0) - y(d.ate * f)}" rx="1" fill="${css('--bar3')}"/>`; }).join('');
-    const hits = items.map((d, i) => `<rect data-i="${i}" x="${L + i * bw}" y="${T}" width="${bw}" height="${ih + B}" fill="transparent"/>`).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${g}${bars}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
+        <rect x="${x + w * 0.3}" y="${y(d.ate * f)}" width="${w * 0.4}" height="${y(0) - y(d.ate * f)}" rx="1" fill="${css('--bar3')}"/></g>`; }).join('');
+    // rótulos: volume acima da coluna, atendidas e ≤5 min no topo das suas barras,
+    // empurrados para não se sobreporem (e para cima se a barra for baixa demais)
+    const labs = items.map((d, i) => {
+      const f = k(d), cx = L + i * bw + bw / 2;
+      let yv = y(d.volume * f) - 3, ya = y(d.total * f) + fs, y5 = y(d.ate * f) + fs;
+      ya = Math.max(ya, yv + lh); y5 = Math.max(y5, ya + lh);
+      const base = y(0) - 2;
+      if (y5 > base) { const sh = y5 - base; yv -= sh; ya -= sh; y5 -= sh; }
+      const s = d.ordem === sel;
+      const t1 = (v, yy, cor, w8) => `<text x="${cx}" y="${yy.toFixed(1)}" font-size="${s ? fs + .5 : fs}" font-weight="${w8}" text-anchor="middle" fill="${cor}" ${halo()}>${numCurto(v, largo)}</text>`;
+      return `<g class="vlab"${opac(d)}>${t1(d.volume * f, yv, css('--ink2'), 600)}${t1(d.total * f, ya, css('--p500'), 700)}${t1(d.ate * f, y5, css('--p700'), 800)}</g>`;
+    }).join('');
+    const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 30}" width="${bw}" height="${ih + B + 30}" fill="transparent"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" id="ch2" role="img" aria-label="Volume">${faixaSel(items, L, bw, T - 16, ih + B + 16)}${g}${bars}${labs}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
   function bindTaps(items) {
-    const info = d => {
-      const ex = d.extras && Object.keys(d.extras).length ? ' · ' + Object.entries(d.extras).map(([c, v]) => `${c} ${typeof v === 'number' ? String(v).replace('.', ',') : v}`).join(' · ') : '';
-      const base = `${P.rotulo(d)}${d.tipo === 'DIA' ? '' : ` (${diasTxt(d)})`} — NS ${fmtPct(d.ns)} · ${fmtInt(d.ate)} de ${fmtInt(d.total)} em até 5 min · volume ${fmtInt(d.volume)}`;
-      return base + (d.tipo === 'DIA' ? '' : ` (${fmtInt(d.volume / d.dias)}/dia)`) + ex;
-    };
-    [['#ch1', '#cap1'], ['#ch2', '#cap2']].forEach(([s, c]) => {
+    ['#ch1', '#ch2'].forEach(s => {
       const el = $(s); if (!el) return;
-      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) { const cp = $(c); if (cp) cp.textContent = info(items[+t.dataset.i]); } });
+      el.addEventListener('click', e => { const t = e.target.closest('[data-i]'); if (t) toggleSel(items[+t.dataset.i].ordem); });
     });
+    main.querySelectorAll('table.tsel tbody tr').forEach(tr => tr.addEventListener('click', () => toggleSel(tr.dataset.ordem)));
   }
 
   // ---------------- Histórico ----------------
