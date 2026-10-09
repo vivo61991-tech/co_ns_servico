@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.8.0';
+  const APP_VERSION = '2.9.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -579,8 +579,8 @@
   const ppTxt = v => (v === 0 ? '' : v > 0 ? '▲ ' : '▼ ') + Math.abs(v).toFixed(1).replace('.', ',') + ' p.p.';
 
   // Mensagem no formato sugerido pela gerência, ampliado com mês, semana e dia.
-  // Número = TOTAL_ATENDIDAS (dia: do dia; semana/mês: média por dia, para o período aberto
-  // comparar com os fechados). NS em negrito. * = período parcial.
+  // Número = TOTAL_ATENDIDAS do período (total, sem média: o peso de cada dia da semana é muito
+  // diferente — domingo baixo, segunda pico). NS em negrito. * = período parcial.
   const MES_ABR = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
   const MES_EXT = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
   const Cap = t => t.charAt(0).toUpperCase() + t.slice(1);
@@ -592,26 +592,79 @@
     const [, m2, d2] = r.fim.split('-').map(Number);       // semana: 24-30/ago, 31-06/set
     return `${String(d).padStart(2, '0')}-${String(d2).padStart(2, '0')}/${MES_ABR[m2 - 1]}${ast}`;
   }
-  function blocoMsg(rows) {
-    const lab = rows.map(rotuloMsg);
-    const num = rows.map(r => fmtInt(r.tipo === 'DIA' ? r.total : Math.round(r.total / (r.dias || 1))));
-    const lw = Math.max(...lab.map(x => x.length)), nw = Math.max(...num.map(x => x.length));
-    return rows.map((r, i) => `▫️ ${lab[i].padEnd(lw)} → ${num[i].padStart(nw)} | *${pct1(r.ns)}*`);
-  }
-  function textoCompartilhar() {
+  // conteúdo da mensagem, independente do formato (WhatsApp / Teams)
+  function conteudoMsg() {
     const all = [...periodos().values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
     const por = t => all.filter(r => r.tipo === t && r.ns != null);
     const meses = por('MES').slice(-LIMITE.MES), semanas = por('SEMANA').slice(-LIMITE.SEMANA), dias = por('DIA').slice(-LIMITE.DIA);
-    const L = ['📊 *Atendidas x NS (5 min)*'];
-    if (meses.length) L.push('', '*Mensal* _(média/dia)_', ...blocoMsg(meses));
-    if (semanas.length) L.push('', '*Semanal* _(média/dia)_', ...blocoMsg(semanas));
+    const linha = r => ({ lab: rotuloMsg(r), num: fmtInt(r.total), ns: pct1(r.ns), status: r.status });
+    const blocos = [];
+    if (meses.length) blocos.push({ titulo: 'Mensal', col: 'Mês', linhas: meses.map(linha) });
+    if (semanas.length) blocos.push({ titulo: 'Semanal', col: 'Semana', linhas: semanas.map(linha) });
     if (dias.length) {
       const ms = [...new Set(dias.map(r => +r.inicio.slice(5, 7)))].map(m => MES_EXT[m - 1]);
-      L.push('', `*Diário – ${ms.join('/')}*`, ...blocoMsg(dias));
+      blocos.push({ titulo: `Diário – ${ms.join('/')}`, col: 'Dia', linhas: dias.map(linha) });
     }
-    if ([...meses, ...semanas].some(r => !r.completo)) L.push('', '* _parcial_');
+    return { blocos, parcial: [...meses, ...semanas].some(r => !r.completo) };
+  }
+  function textoCompartilhar() {
+    const c = conteudoMsg();
+    const L = ['📊 *Atendidas x NS (5 min)*'];
+    for (const b of c.blocos) {
+      const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
+      L.push('', `*${b.titulo}*`, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | *${x.ns}*`));
+    }
+    if (c.parcial) L.push('', '* _parcial_');
     L.push('', 'Toque no link para abrir o painel completo:', APP_URL);
     return L.join('\n');
+  }
+  // Teams: HTML com uma tabela por bloco (o Teams cola tabelas como tabelas, com negrito e link)
+  const COR_TEAMS = { VERDE: '#5F8A12', AMARELO: '#B36800', VERMELHO: '#C41A60' };
+  function htmlTeams() {
+    const c = conteudoMsg();
+    const th = 'style="text-align:left;padding:4px 12px 4px 0;border-bottom:1px solid #D5BFE7;color:#642A90"';
+    const thR = 'style="text-align:right;padding:4px 12px 4px 0;border-bottom:1px solid #D5BFE7;color:#642A90"';
+    const td = 'style="padding:3px 12px 3px 0"', tdR = 'style="text-align:right;padding:3px 12px 3px 0"';
+    let h = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">';
+    h += '<p>📊 <b>Atendidas x NS (5 min)</b></p>';
+    for (const b of c.blocos) {
+      h += `<p><b>${esc(b.titulo)}</b></p><table style="border-collapse:collapse"><thead><tr><th ${th}>${esc(b.col)}</th><th ${thR}>Atendidas</th><th ${thR}>NS 5 min</th></tr></thead><tbody>`;
+      for (const x of b.linhas) h += `<tr><td ${td}>${esc(x.lab)}</td><td ${tdR}>${esc(x.num)}</td><td ${tdR}><b style="color:${COR_TEAMS[x.status] || '#1F1530'}">${esc(x.ns)}</b></td></tr>`;
+      h += '</tbody></table>';
+    }
+    if (c.parcial) h += '<p>* <i>parcial</i></p>';
+    h += `<p>Clique no link para abrir o painel completo:<br><a href="${APP_URL}">${APP_URL}</a></p></div>`;
+    return h;
+  }
+  // versão em texto simples (para quem colar onde não há formatação)
+  function textoSimples() {
+    const c = conteudoMsg();
+    const L = ['📊 Atendidas x NS (5 min)'];
+    for (const b of c.blocos) {
+      const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
+      L.push('', b.titulo, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | ${x.ns}`));
+    }
+    if (c.parcial) L.push('', '* parcial');
+    L.push('', 'Clique no link para abrir o painel completo:', APP_URL);
+    return L.join('\n');
+  }
+  // copia com formatação (HTML) + texto simples; cai para execCommand se o navegador não suportar
+  async function copiarFormatado(html, plain) {
+    try {
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([plain], { type: 'text/plain' }) })]);
+        return true;
+      }
+    } catch (e) { /* tenta o método antigo */ }
+    const div = document.createElement('div');
+    div.contentEditable = 'true'; div.innerHTML = html;
+    div.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+    document.body.appendChild(div);
+    const rg = document.createRange(); rg.selectNodeContents(div);
+    const sl = getSelection(); sl.removeAllRanges(); sl.addRange(rg);
+    let ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    sl.removeAllRanges(); div.remove();
+    return ok;
   }
 
   function svgCompartilhar(d) {
@@ -684,35 +737,58 @@
     const d = dadosCompartilhar();
     if (!d) { toast('Ainda não há dados diários para compartilhar.'); return; }
     const bg = document.createElement('div'); bg.className = 'sheet-bg';
-    bg.innerHTML = `<div class="sheet"><h3>Compartilhar no WhatsApp</h3>
+    bg.innerHTML = `<div class="sheet"><h3>Compartilhar</h3>
       <div class="small muted" style="margin-bottom:8px">Confira a imagem e a mensagem antes de enviar.</div>
       <div id="shPrev" class="shprev"><div class="small muted" style="padding:40px 0;text-align:center">Gerando a imagem…</div></div>
-      <pre class="shmsg" id="shMsg"></pre>
-      <button class="btn" id="shEnviar" disabled>Enviar pelo WhatsApp</button>
-      <div class="row" style="margin-top:10px"><button class="btn sec" id="shBaixar" disabled>Baixar imagem</button><button class="btn sec" id="shCopiar">Copiar mensagem</button></div>
-      <button class="btn sec" id="shFechar" style="margin-top:10px">Fechar</button></div>`;
+      <div class="row" style="margin-bottom:12px"><button class="btn sec" id="shBaixar" disabled>Baixar imagem</button><button class="btn sec" id="shCopImg" disabled>Copiar imagem</button></div>
+      <div class="seg shtabs" role="tablist"><button role="tab" data-t="wa" class="on">WhatsApp</button><button role="tab" data-t="teams">Teams</button></div>
+      <div id="tabWa">
+        <pre class="shmsg" id="shMsg"></pre>
+        <button class="btn" id="shEnviar" disabled>Enviar pelo WhatsApp</button>
+        <button class="btn sec" id="shCopiar" style="margin-top:10px">Copiar texto do WhatsApp</button>
+      </div>
+      <div id="tabTeams" hidden>
+        <div class="shteams" id="shTeams"></div>
+        <button class="btn" id="shTeamsCop">Copiar para o Teams</button>
+        <div class="small muted" style="margin-top:8px">Copia a mensagem com negrito, tabelas e link. No Teams, cole (Ctrl+V) na conversa ou no canal; para a imagem, use <b>Copiar imagem</b> e cole também, ou anexe a imagem baixada.</div>
+      </div>
+      <button class="btn sec" id="shFechar" style="margin-top:12px">Fechar</button></div>`;
     document.body.appendChild(bg);
-    const texto = textoCompartilhar();
-    bg.querySelector('#shMsg').textContent = texto;
+    const q = sel => bg.querySelector(sel);
+    const texto = textoCompartilhar(), html = htmlTeams(), simples = textoSimples();
+    q('#shMsg').textContent = texto;
+    q('#shTeams').innerHTML = html;
+    bg.querySelectorAll('.shtabs button').forEach(b => b.onclick = () => {
+      bg.querySelectorAll('.shtabs button').forEach(x => x.classList.toggle('on', x === b));
+      q('#tabWa').hidden = b.dataset.t !== 'wa'; q('#tabTeams').hidden = b.dataset.t !== 'teams';
+    });
+    let urlPrev = null, file = null, blob = null;
     const fechar = () => { bg.remove(); if (urlPrev) URL.revokeObjectURL(urlPrev); };
     bg.addEventListener('click', e => { if (e.target === bg) fechar(); });
-    bg.querySelector('#shFechar').onclick = fechar;
-    bg.querySelector('#shCopiar').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Mensagem copiada'); } catch (e) { toast('Não consegui copiar — selecione o texto e copie.'); } };
-    let urlPrev = null, file = null;
+    q('#shFechar').onclick = fechar;
+    q('#shCopiar').onclick = async () => { try { await navigator.clipboard.writeText(texto); toast('Texto do WhatsApp copiado'); } catch (e) { toast('Não consegui copiar — selecione o texto e copie.'); } };
+    q('#shTeamsCop').onclick = async () => {
+      const ok = await copiarFormatado(html, simples);
+      toast(ok ? 'Copiado ✓ Agora cole no Teams (Ctrl+V)' : 'Não consegui copiar — selecione a tabela e copie.', 4000);
+    };
     const nome = `ns-diario-${d.cur.inicio}.png`;
     try {
-      const blob = await pngDeSvg(svgCompartilhar(d));   // gera antes do toque em Enviar (o celular exige o toque "fresco" para compartilhar)
+      blob = await pngDeSvg(svgCompartilhar(d));   // gera antes do toque em Enviar (o celular exige o toque "fresco" para compartilhar)
       file = new File([blob], nome, { type: 'image/png' });
       urlPrev = URL.createObjectURL(blob);
-      bg.querySelector('#shPrev').innerHTML = `<img src="${urlPrev}" alt="Imagem do NS por dia" id="shImg">`;
-      bg.querySelector('#shEnviar').disabled = false; bg.querySelector('#shBaixar').disabled = false;
+      q('#shPrev').innerHTML = `<img src="${urlPrev}" alt="Imagem do NS por dia" id="shImg">`;
+      q('#shEnviar').disabled = false; q('#shBaixar').disabled = false; q('#shCopImg').disabled = false;
     } catch (err) {
-      bg.querySelector('#shPrev').innerHTML = `<div class="banner bad">Não consegui gerar a imagem: ${esc(err.message)}</div>`;
+      q('#shPrev').innerHTML = `<div class="banner bad">Não consegui gerar a imagem: ${esc(err.message)}</div>`;
       return;
     }
     const baixar = () => { const a = document.createElement('a'); a.href = urlPrev; a.download = nome; document.body.appendChild(a); a.click(); a.remove(); };
-    bg.querySelector('#shBaixar').onclick = baixar;
-    bg.querySelector('#shEnviar').onclick = async () => {
+    q('#shBaixar').onclick = baixar;
+    q('#shCopImg').onclick = async () => {
+      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); toast('Imagem copiada ✓ Cole na conversa (Ctrl+V)'); }
+      catch (e) { toast('Este navegador não copia imagem — use Baixar imagem.'); }
+    };
+    q('#shEnviar').onclick = async () => {
       // copia a mensagem também: alguns celulares (iPhone) mandam a imagem sem o texto — aí é só colar
       if (navigator.clipboard) navigator.clipboard.writeText(texto).catch(() => {});
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -801,5 +877,5 @@
   })();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   $('#bShare').addEventListener('click', abrirCompartilhar);
-  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), teams: () => htmlTeams(), simples: () => textoSimples(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
 })();
