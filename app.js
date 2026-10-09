@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.9.0';
+  const APP_VERSION = '2.9.1';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -615,7 +615,7 @@
       L.push('', `*${b.titulo}*`, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | *${x.ns}*`));
     }
     if (c.parcial) L.push('', '* _parcial_');
-    L.push('', 'Toque no link para abrir o painel completo:', APP_URL);
+    L.push('', 'Fonte: ' + APP_URL);   // uma linha só: evita o "Ler mais" do WhatsApp esconder o link
     return L.join('\n');
   }
   // Teams: HTML com uma tabela por bloco (o Teams cola tabelas como tabelas, com negrito e link)
@@ -633,7 +633,7 @@
       h += '</tbody></table>';
     }
     if (c.parcial) h += '<p>* <i>parcial</i></p>';
-    h += `<p>Clique no link para abrir o painel completo:<br><a href="${APP_URL}">${APP_URL}</a></p></div>`;
+    h += `<p>Fonte: <a href="${APP_URL}">${APP_URL}</a></p></div>`;
     return h;
   }
   // versão em texto simples (para quem colar onde não há formatação)
@@ -645,7 +645,7 @@
       L.push('', b.titulo, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | ${x.ns}`));
     }
     if (c.parcial) L.push('', '* parcial');
-    L.push('', 'Clique no link para abrir o painel completo:', APP_URL);
+    L.push('', 'Fonte: ' + APP_URL);
     return L.join('\n');
   }
   // copia com formatação (HTML) + texto simples; cai para execCommand se o navegador não suportar
