@@ -168,6 +168,10 @@ table.tsel tbody tr.sel td:last-child{border-right-color:var(--selln)}
 :root{--bar1:var(--p100);--bar2:var(--p300);--bar3:var(--p700)}
 @media (prefers-color-scheme: dark){:root{--bar1:#4a3466;--bar2:#8549b5;--bar3:#d5bfe7}}
 .legend i{border-radius:3px}
+/* variações: verde melhorou, vermelho piorou */
+.dlt{font-variant-numeric:tabular-nums;white-space:nowrap}
+.dlt.up{color:#5F8A12} .dlt.down{color:#D0256A} .dlt.neu{color:var(--ink2)} .dlt.vol{color:var(--ink2);font-weight:600}
+@media (prefers-color-scheme: dark){.dlt.up{color:#B6E05A}.dlt.down{color:#FF6FA5}}
 </style>
 </head>
 <body>

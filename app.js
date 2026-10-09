@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '2.4.0';
+  const APP_VERSION = '2.5.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -256,8 +256,18 @@
   }
   const nomeCur = r => r.tipo === 'MES' ? P.rotulo(r).replace('*', '') : r.tipo === 'SEMANA' ? 'Semana ' + P.rotulo(r).replace('*', '') : P.rotulo(r);
   const diasTxt = r => r.completo ? `${r.dias} dias` : `${r.dias} de ${r.diasPeriodo} dias`;
-  const pp = v => (v >= 0 ? '+' : '') + v.toFixed(1).replace('.', ',') + ' p.p.';
-  const pc = v => (v >= 0 ? '+' : '') + (v * 100).toFixed(1).replace('.', ',') + '%';
+  // variação com seta: ▲ subiu / ▼ caiu (sem sinal de + ou −)
+  const seta = v => Math.abs(v) < 0.05 ? '' : v > 0 ? '▲ ' : '▼ ';
+  // NS: verde se melhorou (subiu), vermelho se piorou (caiu)
+  // arredonda para 1 casa sem o erro do ponto flutuante (10,35 → 10,4)
+  const r1 = v => Math.round(Math.round(v * 100) / 10) / 10;
+  function pp(v, status) {
+    const a = r1(v);
+    const cls = a === 0 ? 'neu' : a > 0 ? 'up' : 'down';
+    return `<span class="dlt ${cls}">${seta(a)}${Math.abs(a).toFixed(1).replace('.', ',')} p.p.</span>`;
+  }
+  // volume: só a seta (mais volume não é bom nem ruim)
+  const pc = v => { const a = r1(v * 100); return `<span class="dlt vol">${seta(a)}${Math.abs(a).toFixed(1).replace('.', ',')}%</span>`; };
   const nomePrev = (t, r) => !r ? 'anterior' : t === 'DIA' ? P.rotulo(r) : P.rotulo(r, true).replace('*', '');
   function detalhe(d) {
     const ex = d.extras && Object.keys(d.extras).length ? ' · ' + Object.entries(d.extras).map(([c, v]) => `${c} ${typeof v === 'number' ? String(v).replace('.', ',') : v}`).join(' · ') : '';
@@ -318,9 +328,9 @@
       }
       k = `
         <div class="${kc} wide"><div class="l">${selRow ? 'Dia selecionado' : 'Último dia'} · ${esc(P.rotulo(cur))}</div><div class="v">${fmtPct(cur.ns)}</div>
-          <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)}${dPP == null ? '' : ` · ${pp(dPP)} vs ${esc(nomePrev(t, prev))}`}</div></div>
+          <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)}</div></div>
         ${fCard}
-        <div class="kpi"><div class="l">Dias na meta</div><div class="v">${items.filter(d => d.ns >= d.meta).length}/${items.length}</div><div class="s">últimos ${items.length} dias</div></div>
+        <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP, cur.status)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
         <div class="${kc} wide"><div class="l">Volume · ${esc(P.rotulo(cur))}</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${fmtInt(cur.total)} atendidas (${fmtPct(cur.total / cur.volume)})${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     } else {
       const f = metaFalta(cur.total, cur.ate, meta);
@@ -333,7 +343,7 @@
           <div class="v">${fmtPct(cur.ns)}</div>
           <div class="s"><span class="pill ${cur.status}">${stNome(cur.status)}</span> meta ${fmtPct(meta)} · <b class="dias">${diasTxt(cur)}</b></div></div>
         <div class="${kc}"><div class="l">${tFalta}</div><div class="v">${fmtInt(f.falta || f.folga)}</div><div class="s">${f.falta ? 'atend. em até 5 min' : (cur.completo ? 'atend. podiam passar de 5 min' : 'atend. podem passar de 5 min')}${cur.completo ? '' : ` · com ${cur.dias} dias`}</div></div>
-        <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
+        <div class="${kc}"><div class="l">vs ${esc(nomePrev(t, prev))}</div><div class="v">${dPP == null ? '—' : pp(dPP, cur.status)}</div><div class="s">NS ${prev ? fmtPct(prev.ns) : '—'}</div></div>
         <div class="${kc} wide"><div class="l">Volume médio por dia · ${esc(P.rotulo(cur, true))}</div><div class="v">${fmtInt(vd(cur))}</div>
           <div class="s">${fmtInt(cur.volume)} em ${diasTxt(cur)}${dVol == null ? '' : ` · ${pc(dVol)} vs ${esc(nomePrev(t, prev))}`}</div></div>`;
     }
