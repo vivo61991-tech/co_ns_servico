@@ -197,9 +197,15 @@ header h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .legend i.ln.mk{position:relative;width:18px}
 .legend i.ln.mk::after{content:"";position:absolute;left:5px;top:-5px;width:6px;height:6px;border:2px solid var(--laranjaL);border-radius:50%;background:var(--card)}
 .kdist .v .dlt{font-size:inherit}
+/* cards: nada quebra linha no meio de um selo ou de uma variação */
+.kpi .l,.kpi .s{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi .s .dlt{font-weight:700} .pill{white-space:nowrap}
+.kpi.kper .v{font-size:17px;white-space:nowrap;margin-top:5px;margin-bottom:3px}
+.parc{color:var(--p700);font-weight:700}
+@media (prefers-color-scheme: dark){.parc{color:#d3b5f0}}
 /* linha do NS em laranja (#FF9901) */
-:root{--laranjaL:#FF9901}
-@media (prefers-color-scheme: dark){:root{--laranjaL:#FFB038}}
+:root{--laranjaL:#FF9901;--nsLab:#7F3C00}
+@media (prefers-color-scheme: dark){:root{--laranjaL:#FFB038;--nsLab:#FFD08A}}
 /* colunas de variação */
 table.conf td.tv{font-size:.92em;white-space:nowrap}
 table.conf td.tv .dlt{font-weight:700}

@@ -1,4 +1,4 @@
-# NS Painel · B2C Suporte (v3.1.0)
+# NS Painel · B2C Suporte (v3.4.0)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
@@ -24,3 +24,6 @@ Também dá para importar o TXT direto no app (aba **Dados**). Nesse caso, os da
 - Mês e semana batem com a soma dos dias, quando todos os dias do período estão no arquivo.
 - Não há linha repetida.
 - Período fechado que mudou em relação ao que já estava salvo pede confirmação.
+
+## Meta
+A meta do NS é **90%**, definida no app (a coluna META_NS do arquivo é ignorada). Situação: Meta atingida ≥ 90% · Em atenção ≥ 70% · Crítico < 70%.
