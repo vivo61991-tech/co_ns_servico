@@ -202,6 +202,14 @@ header h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .kpi .s .dlt{font-weight:700} .pill{white-space:nowrap}
 .kpi.kper .v{font-size:17px;white-space:nowrap;margin-top:5px;margin-bottom:3px}
 .parc{color:var(--p700);font-weight:700}
+/* filtro do modo Dia: cápsulas dos dias da semana (o ✕ só aparece com filtro ligado) */
+.wdf{display:flex;gap:5px;align-items:center;margin:12px 0}
+.wdf button{flex:1 1 0;min-width:0;height:32px;padding:0;border-radius:99px;border:1px solid var(--line);background:var(--card);color:var(--ink2);font:inherit;font-size:11.5px;font-weight:700;letter-spacing:.2px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.wdf button.dom{color:var(--vermelho)}
+.wdf button.on{background:var(--p700);border-color:var(--p700);color:#fff}
+.wdf button:disabled{opacity:.4;cursor:default}
+.wdf .wdx{flex:0 0 32px;width:32px;background:var(--selbg);border-color:var(--selln);color:var(--selink);font-size:13px}
+@media (prefers-color-scheme: dark){.wdf button.on{background:#8549b5;border-color:#8549b5}}
 @media (prefers-color-scheme: dark){.parc{color:#d3b5f0}}
 /* linha do NS em laranja (#FF9901) */
 :root{--laranjaL:#FF9901;--nsLab:#7F3C00}

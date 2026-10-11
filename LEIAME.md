@@ -1,4 +1,4 @@
-# NS Painel · B2C Suporte (v3.4.0)
+# NS Painel · B2C Suporte (v3.5.0)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
@@ -24,6 +24,13 @@ Também dá para importar o TXT direto no app (aba **Dados**). Nesse caso, os da
 - Mês e semana batem com a soma dos dias, quando todos os dias do período estão no arquivo.
 - Não há linha repetida.
 - Período fechado que mudou em relação ao que já estava salvo pede confirmação.
+
+## Comparar o mesmo dia da semana
+No modo **Dia**, acima dos gráficos ficam as cápsulas **DOM SEG TER QUA QUI SEX SÁB**.
+- Sem filtro: os 7 dias mais recentes, corridos.
+- Tocar num dia da semana: mostra só aquele dia (até 7 ocorrências: segunda com segunda etc.). Cards, gráficos e tabela passam a comparar com o mesmo dia da semana anterior.
+- Tocar de novo no dia ligado, ou no **✕**, volta aos dias corridos. O ✕ só aparece com o filtro ligado.
+- Para ter 7 de cada dia da semana, o TXT precisa trazer pelo menos 49 dias (com 42 dias aparecem 6).
 
 ## Meta
 A meta do NS é **90%**, definida no app (a coluna META_NS do arquivo é ignorada). Situação: Meta atingida ≥ 90% · Em atenção ≥ 70% · Crítico < 70%.

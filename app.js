@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '3.4.0';
+  const APP_VERSION = '3.5.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -259,6 +259,20 @@
   // passam a mostrar esse período comparado ao anterior. Tocar de novo no selecionado limpa
   // a seleção e os cards voltam ao último período.
   let sel = null; // ORDEM do período selecionado no modo atual
+  // Filtro do modo Dia por dia da semana (0 = domingo … 6 = sábado). null = dias corridos.
+  // Com filtro, a série vira só aquele dia da semana: gráficos, tabela e cards comparam
+  // segunda com segunda, terça com terça… Vale só enquanto o app está aberto.
+  let filtroDia = null;
+  const wdDe = r => { const [y, m, d] = r.inicio.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
+  const WD_PLURAL = ['domingos', 'segundas', 'terças', 'quartas', 'quintas', 'sextas', 'sábados'];
+  const WD_ULTIMO = ['Último domingo', 'Última segunda', 'Última terça', 'Última quarta', 'Última quinta', 'Última sexta', 'Último sábado'];
+  const WD_ANTERIOR = ['o domingo anterior', 'a segunda anterior', 'a terça anterior', 'a quarta anterior', 'a quinta anterior', 'a sexta anterior', 'o sábado anterior'];
+  function setFiltroDia(w) {
+    filtroDia = w; sel = null;
+    const y = window.scrollY;
+    renderPainel();
+    window.scrollTo(0, y);
+  }
   const ORDEM_MODOS = ['DIA', 'SEMANA', 'MES'];
   let modosDisp = ORDEM_MODOS.slice();
   const semAnim = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -341,7 +355,7 @@
     renderPainel();
     window.scrollTo(0, y);
   }
-  const LIMITE = { DIA: 14, SEMANA: 12, MES: 12 };
+  const LIMITE = { DIA: 7, SEMANA: 12, MES: 12 };   // Dia: 7 dias corridos, ou os 7 últimos do dia da semana filtrado
   // card 4: qual período está na tela e se ele está completo
   const DIAS_SEMANA = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
   const MESES_NOME = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
@@ -399,7 +413,11 @@
     const all = [...per.values()].sort((a, b) => a.ordem.localeCompare(b.ordem));
     const por = t => all.filter(r => r.tipo === t);
     if (!por(modo).length) { modo = ['DIA', 'SEMANA', 'MES'].find(t => por(t).length); sel = null; }
-    const serie = por(modo);
+    let serie = por(modo);
+    if (modo === 'DIA' && filtroDia != null) {
+      const f = serie.filter(r => wdDe(r) === filtroDia);
+      if (f.length) serie = f; else filtroDia = null;    // dia da semana sem dados: volta aos dias corridos
+    }
     const items = serie.slice(-LIMITE[modo]);
     if (sel && !items.some(r => r.ordem === sel)) sel = null; // período saiu da janela/dados
     const s0 = snaps[0];
@@ -417,6 +435,9 @@
     dicaArrastar();
     main.querySelectorAll('.seg button').forEach(b => b.onclick = () => { if (b.dataset.m !== modo) setModo(b.dataset.m); });
     if ($('#bLimpar')) $('#bLimpar').onclick = () => toggleSel(sel);
+    // filtro por dia da semana: tocar liga; tocar no mesmo de novo ou no ✕ desliga
+    main.querySelectorAll('.wdf button[data-wd]').forEach(b => b.onclick = () => { const w = +b.dataset.wd; setFiltroDia(filtroDia === w ? null : w); });
+    if ($('#bWdx')) $('#bWdx').onclick = () => setFiltroDia(null);
     bindTaps(items);
   }
 
@@ -439,25 +460,32 @@
         <div class="${kc} kns"><div class="l">NS 5 min</div><div class="v">${fmtPct(cur.ns)}</div><div class="s">${sNs}</div></div>
         <div class="${kc} kvol"><div class="l">Chamadas recebidas</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${sVol}</div></div>
         <div class="${kc} kdist"><div class="l">Distância da meta</div><div class="v">${dMeta == null ? '—' : pp(dMeta)}</div><div class="s">${cur.status ? `<span class="pill ${cur.status}">${stNome(cur.status)}</span>` : ''}</div></div>
-        <div class="${kc} kper"><div class="l">${tituloPeriodo(t, !!selRow)}</div><div class="v">${esc(valorPeriodo(cur))}</div><div class="s">${situacaoPeriodo(cur)}</div></div>`;
-    const tituloNS = t === 'DIA' ? 'NS por dia' : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
+        <div class="${kc} kper"><div class="l">${t === 'DIA' && filtroDia != null && !selRow ? WD_ULTIMO[filtroDia] : tituloPeriodo(t, !!selRow)}</div><div class="v">${esc(valorPeriodo(cur))}</div><div class="s">${situacaoPeriodo(cur)}</div></div>`;
+    const fd = t === 'DIA' ? filtroDia : null;
+    const tituloNS = t === 'DIA' ? (fd != null ? `NS · ${WD_PLURAL[fd]}` : 'NS por dia') : t === 'SEMANA' ? 'NS por semana' : 'NS por mês';
+    const diasDisp = t === 'DIA' ? new Set(all.filter(r => r.tipo === 'DIA').map(wdDe)) : null;
+    const filtro = t !== 'DIA' ? '<div style="height:12px"></div>' : `
+      <div class="wdf" role="group" aria-label="Comparar o mesmo dia da semana">
+        ${[0, 1, 2, 3, 4, 5, 6].map(w => `<button data-wd="${w}" class="${w === 0 ? 'dom' : ''}${fd === w ? ' on' : ''}" aria-pressed="${fd === w}" ${diasDisp.has(w) ? '' : 'disabled'}>${SEMANA_ABR[w]}</button>`).join('')}
+        ${fd != null ? '<button class="wdx" id="bWdx" aria-label="Remover filtro e voltar aos dias corridos">✕</button>' : ''}
+      </div>`;
     const legNS = `<div class="legend"><span><i style="background:var(--verdeS)"></i>Meta atingida</span><span><i style="background:var(--amareloS)"></i>Em atenção</span><span><i style="background:var(--vermelhoS)"></i>Crítico</span>${t === 'DIA' ? '' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta ${fmtPct(META).replace(',0', '')}</span></div>`;
     const cab = t === 'DIA' ? 'DIA' : t === 'SEMANA' ? 'SEMANA' : 'MÊS';
     const dica = 'Toque numa coluna para selecionar · toque de novo para limpar.';
-    const cap = selRow ? esc(detalhe(selRow)) : dica;
+    const cap = selRow ? esc(detalhe(selRow)) : fd != null ? `Só ${WD_PLURAL[fd]} · ${items.length} mais recentes. ${dica}` : dica;
     return `
       <div class="kpis">${k}</div>
-      <div style="height:12px"></div>
-      <div class="card chart"><h2>${t === 'DIA' ? 'Chamadas recebidas e NS por dia' : t === 'SEMANA' ? 'Chamadas recebidas e NS por semana' : 'Chamadas recebidas e NS por mês'}</h2>${chartVol(items, t)}
+      ${filtro}
+      <div class="card chart"><h2>${t === 'DIA' ? (fd != null ? `Chamadas recebidas e NS · ${WD_PLURAL[fd]}` : 'Chamadas recebidas e NS por dia') : t === 'SEMANA' ? 'Chamadas recebidas e NS por semana' : 'Chamadas recebidas e NS por mês'}</h2>${chartVol(items, t)}
         <div class="legend"><span><i style="background:var(--barR)"></i>chamadas recebidas</span><span><i class="ln mk" style="border-color:var(--laranjaL)"></i>NS 5 min (eixo à direita)</span></div>
-        <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? dica : `Hachurado = ${t === 'MES' ? 'mês' : 'semana'} em aberto (total parcial). ` + dica)}</div></div>
+        <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? cap : `Hachurado = ${t === 'MES' ? 'mês' : 'semana'} em aberto (total parcial). ` + dica)}</div></div>
       <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
         <div class="cap${selRow ? ' capsel' : ''}" id="cap1">${cap}</div></div>
-      <div class="card"><h2>${t === 'DIA' ? 'Dias' : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf tsel">
+      <div class="card"><h2>${t === 'DIA' ? (fd != null ? Cap(WD_PLURAL[fd]) : 'Dias') : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf tsel">
         <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>RECEB.</th><th>VAR.</th><th>NS</th><th>VAR. NS</th></tr></thead><tbody>
         ${[...items].reverse().map(r => { const ant = serie[serie.indexOf(r) - 1]; return `<tr data-ordem="${r.ordem}" class="${r.ordem === sel ? 'sel' : ''}" aria-selected="${r.ordem === sel}"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
           <td>${fmtInt(r.volume)}</td>${tdVar(varRecebidas(r, ant), '%', true)}<td><span class="pill ${r.status}">${fmtPct(r.ns)}</span></td>${tdVar(varNs(r, ant), '')}</tr>`; }).join('')}</tbody></table></div>
-        <div class="small muted" style="margin-top:6px">VAR. = variação de chamadas recebidas (%) · VAR. NS = variação do NS (p.p.), sempre contra ${t === 'DIA' ? 'o dia anterior' : t === 'SEMANA' ? 'a semana anterior' : 'o mês anterior'}.${t === 'DIA' ? '' : ` ${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; a variação de chamadas só aparece com o período fechado.`}</div></div>`;
+        <div class="small muted" style="margin-top:6px">VAR. = variação de chamadas recebidas (%) · VAR. NS = variação do NS (p.p.), sempre contra ${t === 'DIA' ? (fd != null ? WD_ANTERIOR[fd] : 'o dia anterior') : t === 'SEMANA' ? 'a semana anterior' : 'o mês anterior'}.${t === 'DIA' ? '' : ` ${t === 'MES' ? 'Mês aberto' : 'Semana aberta'}: DIAS mostra dias até agora / dias do período; a variação de chamadas só aparece com o período fechado.`}</div></div>`;
   }
 
   // ---------------- Gráficos (SVG) ----------------
@@ -487,7 +515,7 @@
         const [yy, mm, dd] = d.inicio.split('-').map(Number);
         const wd = new Date(Date.UTC(yy, mm - 1, dd)).getUTCDay();
         const dom = wd === 0;
-        return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 10 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${dom ? css('--vermelho') : cor}">${P.rotulo(d, true)}</text>
+        return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 10 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${dom ? css('--vermelho') : cor}">${filtroDia != null ? ddmm(d) : P.rotulo(d, true)}</text>
         <text class="wd" x="${cx}" y="${H - 8}" font-size="${items.length > 10 ? 8.5 : 9.5}" font-weight="${dom || s ? 700 : 400}" text-anchor="middle" fill="${dom ? css('--vermelho') : s ? css('--selink') : css('--ink3')}">${SEMANA_ABR[wd]}</text>`;
       }
       return `<text x="${cx}" y="${H - 22}" font-size="${items.length > 8 ? 9 : 10.5}" font-weight="${s ? 800 : 600}" text-anchor="middle" fill="${cor}">${P.rotulo(d, true)}</text>
