@@ -1,13 +1,22 @@
 /* NS Painel — leitura e validação do TXT exportado do Oracle SQL Developer.
  * Puro JS (navegador e Node). Lê as colunas PELO NOME do cabeçalho: colunas novas
  * em qualquer posição são guardadas em "extras" e não quebram nada.
+ * Aceita o formato antigo (só B2C, colunas ATE_5_MIN / NS_5_MIN) e o formato com
+ * segmentos (SEGMENTO, TEMPO_CORTE_MINUTOS, ATENDIDAS_NO_CORTE, NIVEL_SERVICO).
  */
 (function (root) {
   'use strict';
 
   const OBRIG = ['PERIODO', 'QUANTIDADE_DIAS', 'VOLUME', 'TOTAL_ATENDIDAS', 'ATE_5_MIN', 'TIPO_PERIODO', 'ORDEM'];
-  const OPC = ['NS_5_MIN', 'META_NS', 'STATUS_NS', 'STATUS_PERIODO'];
-  const CONHECIDAS = new Set([...OBRIG, ...OPC]);
+  const OPC = ['NS_5_MIN', 'META_NS', 'STATUS_NS', 'STATUS_PERIODO', 'SEGMENTO', 'TEMPO_CORTE_MINUTOS'];
+  // Nomes genéricos (arquivo com segmentos, cada um com o seu tempo de corte) = mesmas colunas de antes
+  const SINONIMOS = { ATENDIDAS_NO_CORTE: 'ATE_5_MIN', NIVEL_SERVICO: 'NS_5_MIN' };
+  const CONHECIDAS = new Set([...OBRIG, ...OPC, ...Object.keys(SINONIMOS)]);
+  const SEG_PADRAO = 'B2C', CORTE_PADRAO = 5;   // arquivo antigo (sem SEGMENTO): B2C, 5 min
+  // Base do NS de cada segmento, descoberta pela própria tabela (coluna do NS):
+  //   ATENDIDAS = no corte ÷ TOTAL_ATENDIDAS (B2C)   ·   RECEBIDAS = no corte ÷ VOLUME (COE)
+  const BASES = { ATENDIDAS: 'total', RECEBIDAS: 'volume' };
+  const chave = r => (r.segmento || SEG_PADRAO) + '|' + r.ordem;
   const TIPOS = { 1: 'MES', 2: 'SEMANA', 3: 'DIA' };
   const MESES = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
 
@@ -106,13 +115,15 @@
     const tb = tabela(text);
     if (tb.erroGeral) { res.erros.push({ msg: tb.erroGeral }); return res; }
     res.formato = tb.formato;
-    const cols = tb.header.map(normCol);
-    const idx = {}; cols.forEach((c, i) => { if (c && idx[c] == null) idx[c] = i; });
+    const orig = tb.header.map(normCol);
+    const cols = orig.map(c => SINONIMOS[c] || c);          // ATENDIDAS_NO_CORTE → ATE_5_MIN etc.
+    const idx = {}, nomeArq = {}; cols.forEach((c, i) => { if (c && idx[c] == null) { idx[c] = i; nomeArq[c] = orig[i]; } });
+    const N = c => nomeArq[c] || c;                         // mensagens com o nome que está no arquivo
     const dup = cols.filter((c, i) => c && cols.indexOf(c) !== i);
-    if (dup.length) res.erros.push({ msg: `Coluna repetida no cabeçalho: ${[...new Set(dup)].join(', ')}` });
+    if (dup.length) res.erros.push({ msg: `Coluna repetida no cabeçalho: ${[...new Set(dup)].map(N).join(', ')}` });
     const falt = OBRIG.filter(c => idx[c] == null);
     if (falt.length) { res.erros.push({ msg: `Faltam colunas obrigatórias: ${falt.join(', ')}` }); return res; }
-    res.colunasExtras = cols.filter(c => c && !CONHECIDAS.has(c));
+    res.colunasExtras = orig.filter((c, i) => c && !CONHECIDAS.has(c) && !CONHECIDAS.has(cols[i]));
     if (tb.delim === ',') res.avisos.push({ msg: 'Arquivo separado por vírgula: confira se os decimais usam ponto.' });
     if (!tb.rows.length) { res.erros.push({ msg: 'O arquivo tem cabeçalho mas nenhuma linha de dados.' }); return res; }
 
@@ -124,6 +135,18 @@
       const get = c => idx[c] == null ? '' : (cells[idx[c]] ?? '').trim();
       if (cells.length !== cols.length) W(null, `tem ${cells.length} colunas e o cabeçalho tem ${cols.length}`);
       const r = { linha, periodo: get('PERIODO'), extras: {} };
+
+      // segmento e tempo de corte (arquivo antigo: B2C, 5 min)
+      if (idx.SEGMENTO != null) {
+        r.segmento = normTxt(get('SEGMENTO')).replace(/\s+/g, ' ');
+        if (!r.segmento) { E('SEGMENTO', 'vazio'); return; }
+      } else r.segmento = SEG_PADRAO;
+      if (idx.TEMPO_CORTE_MINUTOS != null) {
+        const tc = inteiro(get('TEMPO_CORTE_MINUTOS'));
+        if (tc.erro) E('TEMPO_CORTE_MINUTOS', tc.erro);
+        else if (tc.v < 1 || tc.v > 60) E('TEMPO_CORTE_MINUTOS', `${tc.v} fora do esperado (1 a 60 minutos)`);
+        r.corte = tc.v;
+      } else r.corte = CORTE_PADRAO;
 
       // ORDEM: tipo (1 mês, 2 semana, 3 dia) + AAAAMMDD
       const ord = get('ORDEM');
@@ -137,15 +160,17 @@
       if (y < 2000 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > diasNoMes(y, mo)) { E('ORDEM', `data inválida em ${ord}`); return; }
       if (r.tipo === 'MES' && d !== 1) E('ORDEM', `mês deve começar no dia 01 (${ord})`);
       r.inicio = iso(y, mo, d);
-      if (vistos.has(ord)) E('ORDEM', `${ord} repetida (também na linha ${vistos.get(ord)})`); else vistos.set(ord, linha);
+      const ch = chave(r);
+      if (vistos.has(ch)) E('ORDEM', `${ord} repetida${idx.SEGMENTO != null ? ' no segmento ' + r.segmento : ''} (também na linha ${vistos.get(ch)})`); else vistos.set(ch, linha);
 
       // números
       for (const [c, k2] of [['QUANTIDADE_DIAS', 'dias'], ['VOLUME', 'volume'], ['TOTAL_ATENDIDAS', 'total'], ['ATE_5_MIN', 'ate']]) {
-        const n = inteiro(get(c)); if (n.erro) E(c, n.erro); else r[k2] = n.v;
+        const n = inteiro(get(c)); if (n.erro) E(N(c), n.erro); else r[k2] = n.v;
       }
       if ([r.dias, r.volume, r.total, r.ate].some(v => v == null)) return;
       if (r.total > r.volume) E('TOTAL_ATENDIDAS', `${r.total} maior que VOLUME ${r.volume}`);
-      if (r.ate > r.total) E('ATE_5_MIN', `${r.ate} maior que TOTAL_ATENDIDAS ${r.total}`);
+      if (r.ate > r.total) E(N('ATE_5_MIN'), `${r.ate} maior que TOTAL_ATENDIDAS ${r.total}`);
+      r.semDados = r.volume === 0;   // período sem nenhuma chamada: fica fora das telas
 
       // dias / completo
       const cap = r.tipo === 'DIA' ? 1 : r.tipo === 'SEMANA' ? 7 : diasNoMes(y, mo);
@@ -167,25 +192,16 @@
       const temAst = /\*\s*$/.test(r.periodo);
       if (r.tipo !== 'DIA' && temAst === r.completo) W('PERIODO', `"${r.periodo}" ${temAst ? 'tem' : 'não tem'} * mas o período está ${r.completo ? 'completo' : 'incompleto'}`);
 
-      // NS / meta / status
-      r.ns = ns4(r.ate, r.total);
-      if (r.ns == null) W('TOTAL_ATENDIDAS', 'zero atendimentos — NS indefinido');
+      // NS: o valor do arquivo é guardado; a conferência vem depois, quando a base do segmento é conhecida
       const nsA = decimal(get('NS_5_MIN'));
-      if (nsA.erro) E('NS_5_MIN', nsA.erro);
-      else if (nsA.v != null && r.ns != null) {
-        r.nsArquivo = nsA.v;
-        const diff = Math.abs(nsA.v - r.ns);
-        if (diff > 0.00011) E('NS_5_MIN', `${get('NS_5_MIN')} não bate com ATE_5_MIN ÷ TOTAL_ATENDIDAS = ${String(r.ns).replace('.', ',')}`);
-        else if (diff > 1e-9) W('NS_5_MIN', `arredondamento diferente (${get('NS_5_MIN')} × ${String(r.ns).replace('.', ',')})`);
-      }
+      if (nsA.erro) E(N('NS_5_MIN'), nsA.erro);
+      else { r.nsArquivo = nsA.v; r.nsTxt = get('NS_5_MIN'); }
+      if (r.semDados && nsA.v != null && nsA.v !== 0) E(N('NS_5_MIN'), `${get('NS_5_MIN')} com VOLUME 0`);
       const mt = decimal(get('META_NS'));
       if (mt.erro) E('META_NS', mt.erro);
       r.meta = mt.v != null ? mt.v : 0.8;
       if (r.meta <= 0 || r.meta > 1) E('META_NS', `meta ${get('META_NS')} fora de 0–1`);
-      const stA = normTxt(get('STATUS_NS'));
-      const stC = statusDe(r.ns, r.meta);
-      r.status = ['VERDE', 'AMARELO', 'VERMELHO'].includes(stA) ? stA : stC;
-      if (stA && stA !== stC && r.ns != null) W('STATUS_NS', `arquivo diz ${stA}, a regra (meta ${r.meta}, amarelo ≥ 0,7) daria ${stC}`);
+      r.stArquivo = normTxt(get('STATUS_NS'));
 
       // rótulo confere com a ORDEM?
       const pn = normTxt(r.periodo);
@@ -205,33 +221,71 @@
       res.rows.push(r);
     });
 
-    // somas: mês/semana = soma dos dias, quando todos os dias do período estão no arquivo
-    const diasPorData = new Map(res.rows.filter(r => r.tipo === 'DIA').map(r => [r.inicio, r]));
+    // segmentos, na ordem em que aparecem no arquivo
+    const segs = [...new Set(res.rows.map(r => r.segmento))];
+    res.segmentos = segs.map(nome => {
+      const rs = res.rows.filter(r => r.segmento === nome);
+      const cortes = [...new Set(rs.map(r => r.corte).filter(v => v != null))];
+      if (cortes.length > 1) res.erros.push({ col: 'TEMPO_CORTE_MINUTOS', msg: `segmento ${nome} com tempos de corte diferentes: ${cortes.join(' / ')}` });
+      // base do NS: a conta que bate com a coluna do NS no maior número de linhas do segmento
+      // (empate ou sem coluna de NS: atendidas, como sempre foi). Linha que não bate vira erro.
+      const comNs = rs.filter(r => r.nsArquivo != null && !r.semDados);
+      const bate = b => r => { const v = ns4(r.ate, r[BASES[b]]); return v != null && Math.abs(r.nsArquivo - v) <= 0.00011; };
+      const nA = comNs.filter(bate('ATENDIDAS')).length, nR = comNs.filter(bate('RECEBIDAS')).length;
+      const base = nR > nA ? 'RECEBIDAS' : 'ATENDIDAS';
+      for (const r of rs) {
+        r.base = base;
+        r.ns = ns4(r.ate, r[BASES[base]]);
+        const nomeBase = base === 'RECEBIDAS' ? 'VOLUME' : 'TOTAL_ATENDIDAS';
+        if (r.ns == null && !r.semDados) res.avisos.push({ linha: r.linha, col: nomeBase, msg: 'zero na base do cálculo — NS indefinido' });
+        if (r.nsArquivo != null && r.ns != null) {
+          const diff = Math.abs(r.nsArquivo - r.ns);
+          if (diff > 0.00011) res.erros.push({ linha: r.linha, col: N('NS_5_MIN'), msg: `${r.nsTxt} não bate com ${N('ATE_5_MIN')} ÷ ${nomeBase} = ${String(r.ns).replace('.', ',')}${segs.length > 1 ? ` (segmento ${nome})` : ''}` });
+          else if (diff > 1e-9) res.avisos.push({ linha: r.linha, col: N('NS_5_MIN'), msg: `arredondamento diferente (${r.nsTxt} × ${String(r.ns).replace('.', ',')})` });
+        }
+        const stC = statusDe(r.ns, r.meta), stA = r.stArquivo;
+        r.status = ['VERDE', 'AMARELO', 'VERMELHO'].includes(stA) ? stA : stC;
+        if (stA && stA !== stC && r.ns != null) res.avisos.push({ linha: r.linha, col: 'STATUS_NS', msg: `arquivo diz ${stA}, a regra (meta ${r.meta}, amarelo ≥ 0,7) daria ${stC}` });
+        delete r.nsTxt; delete r.stArquivo;
+      }
+      return { nome, corte: cortes[0] ?? CORTE_PADRAO, base };
+    });
+
+    // somas: mês/semana = soma dos dias (do mesmo segmento), quando todos os dias do período estão no arquivo
+    const diasPorData = new Map(res.rows.filter(r => r.tipo === 'DIA').map(r => [r.segmento + '|' + r.inicio, r]));
     let somasOk = 0;
     for (const r of res.rows.filter(x => x.tipo !== 'DIA')) {
-      const ds = []; for (let i = 0; i < r.dias; i++) { const dd = diasPorData.get(addDias(r.inicio, i)); if (dd) ds.push(dd); }
+      const ds = []; for (let i = 0; i < r.dias; i++) { const dd = diasPorData.get(r.segmento + '|' + addDias(r.inicio, i)); if (dd) ds.push(dd); }
       if (ds.length !== r.dias) continue;
       let ok = true;
-      for (const [c, nome] of [['volume', 'VOLUME'], ['total', 'TOTAL_ATENDIDAS'], ['ate', 'ATE_5_MIN']]) {
+      for (const [c, nome] of [['volume', 'VOLUME'], ['total', 'TOTAL_ATENDIDAS'], ['ate', N('ATE_5_MIN')]]) {
         const s = ds.reduce((a, x) => a + x[c], 0);
-        if (s !== r[c]) { ok = false; res.erros.push({ linha: r.linha, col: nome, msg: `${r.periodo}: ${r[c]} mas a soma dos ${r.dias} dias dá ${s}` }); }
+        if (s !== r[c]) { ok = false; res.erros.push({ linha: r.linha, col: nome, msg: `${segs.length > 1 ? r.segmento + ' · ' : ''}${r.periodo}: ${r[c]} mas a soma dos ${r.dias} dias dá ${s}` }); }
       }
       if (ok) { somasOk++; r.conferidoSoma = true; }
     }
     if (somasOk) res.info.push(`${somasOk} período(s) conferido(s) pela soma dos dias.`);
 
-    // ordem do arquivo e resumo
-    res.rows.sort((a, b) => a.ordem.localeCompare(b.ordem));
-    for (const t of ['MES', 'SEMANA', 'DIA']) res.resumo[t] = res.rows.filter(r => r.tipo === t).length;
-    for (const t of ['MES', 'SEMANA']) {
-      const inc = res.rows.filter(r => r.tipo === t && !r.completo);
-      if (inc.length > 1) res.avisos.push({ msg: `${inc.length} ${t === 'MES' ? 'meses' : 'semanas'} incompletos — normalmente só o último está aberto` });
-      if (inc.length === 1 && inc[0] !== res.rows.filter(r => r.tipo === t).slice(-1)[0]) res.avisos.push({ linha: inc[0].linha, msg: `${inc[0].periodo} está incompleto mas não é o último` });
+    // ordem: segmento (como no arquivo), depois ORDEM; resumo de cada segmento
+    res.rows.sort((a, b) => segs.indexOf(a.segmento) - segs.indexOf(b.segmento) || a.ordem.localeCompare(b.ordem));
+    for (const sg of res.segmentos) {
+      sg.resumo = {};
+      for (const t of ['MES', 'SEMANA', 'DIA']) sg.resumo[t] = res.rows.filter(r => r.segmento === sg.nome && r.tipo === t && !r.semDados).length;
+      sg.semDados = res.rows.filter(r => r.segmento === sg.nome && r.semDados).length;
+    }
+    // resumo geral = 1º segmento (arquivo antigo: igual a antes)
+    res.resumo = res.segmentos.length ? { ...res.segmentos[0].resumo } : { MES: 0, SEMANA: 0, DIA: 0 };
+    for (const sg of segs) for (const t of ['MES', 'SEMANA']) {
+      const doTipo = res.rows.filter(r => r.segmento === sg && r.tipo === t);
+      const inc = doTipo.filter(r => !r.completo);
+      const pre = segs.length > 1 ? sg + ': ' : '';
+      if (inc.length > 1) res.avisos.push({ msg: `${pre}${inc.length} ${t === 'MES' ? 'meses' : 'semanas'} incompletos — normalmente só o último está aberto` });
+      if (inc.length === 1 && inc[0] !== doTipo.slice(-1)[0]) res.avisos.push({ linha: inc[0].linha, msg: `${pre}${inc[0].periodo} está incompleto mas não é o último` });
     }
     const metas = [...new Set(res.rows.map(r => r.meta))];
     if (metas.length > 1) res.avisos.push({ msg: `META_NS diferente entre linhas: ${metas.join(' / ')}` });
-    const ultDia = res.rows.filter(r => r.tipo === 'DIA').slice(-1)[0];
-    res.dataRef = ultDia ? ultDia.inicio : (res.rows.length ? res.rows.map(r => r.fim).sort().slice(-1)[0] : null);
+    const ultDia = res.rows.filter(r => r.tipo === 'DIA').map(r => r.inicio).sort().slice(-1)[0];
+    res.dataRef = ultDia || (res.rows.length ? res.rows.map(r => r.fim).sort().slice(-1)[0] : null);
     return res;
   }
 
@@ -239,11 +293,11 @@
   function compara(rows, anteriores) {
     const out = [];
     for (const r of rows) {
-      const o = anteriores.get(r.ordem);
+      const o = anteriores.get(chave(r));
       if (!o || !o.completo) continue;
-      for (const [c, nome] of [['volume', 'VOLUME'], ['total', 'TOTAL_ATENDIDAS'], ['ate', 'ATE_5_MIN'], ['dias', 'QUANTIDADE_DIAS']])
-        if (o[c] !== r[c]) out.push({ ordem: r.ordem, periodo: r.periodo, col: nome, antes: o[c], agora: r[c] });
-      if (!r.completo) out.push({ ordem: r.ordem, periodo: r.periodo, col: 'STATUS_PERIODO', antes: 'COMPLETO', agora: 'INCOMPLETO' });
+      for (const [c, nome] of [['volume', 'VOLUME'], ['total', 'TOTAL_ATENDIDAS'], ['ate', 'ATENDIDAS NO CORTE'], ['dias', 'QUANTIDADE_DIAS']])
+        if (o[c] !== r[c]) out.push({ ordem: r.ordem, segmento: r.segmento, periodo: r.periodo, col: nome, antes: o[c], agora: r[c] });
+      if (!r.completo) out.push({ ordem: r.ordem, segmento: r.segmento, periodo: r.periodo, col: 'STATUS_PERIODO', antes: 'COMPLETO', agora: 'INCOMPLETO' });
     }
     return out;
   }
@@ -257,6 +311,6 @@
     return curto ? String(d) : `${pad(d)}/${MESES[m - 1]}`;
   }
 
-  const api = { decode, parse, compara, hash, rotulo, ns4, statusDe, diasNoMes, addDias, OBRIG, OPC };
+  const api = { decode, parse, compara, hash, rotulo, ns4, statusDe, diasNoMes, addDias, chave, OBRIG, OPC, SINONIMOS, SEG_PADRAO, CORTE_PADRAO };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.NSData = api;
 })(typeof self !== 'undefined' ? self : this);

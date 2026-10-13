@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '3.5.0';
+  const APP_VERSION = '3.6.0';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -61,13 +61,37 @@
   const META = 0.9;
   // situação pelo NS exibido (89,96% aparece 90,0% → Meta atingida, distância 0,0)
   const situacao = ns => { if (ns == null) return null; const v = Math.round(ns * 1000 + 1e-9) / 10; return v >= META * 100 ? 'VERDE' : v >= 70 ? 'AMARELO' : 'VERMELHO'; };
+  // Segmentos (B2C, COE…): cada um com o seu tempo de corte e a sua base do NS, lidos do TXT.
+  // Arquivo antigo (sem SEGMENTO) = B2C, 5 min, NS ÷ atendidas.
+  const segDe = r => r.segmento || 'B2C';
+  const corteDe = r => r.corte || 5;
+  // NS exato para exibir e comparar (evita arredondar duas vezes: 1.802 ÷ 2.414 = 74,648% → 74,6%;
+  // pelo NS de 4 casas 0,7465 sairia 74,7%). B2C: no corte ÷ atendidas · COE: no corte ÷ recebidas.
+  const nsDe = r => { const den = r.base === 'RECEBIDAS' ? r.volume : r.total; return den > 0 ? r.ate / den : null; };
+  let segmento = (() => { try { return localStorage.getItem('ns-segmento') || 'B2C'; } catch (e) { return 'B2C'; } })();
+  // segmentos do arquivo atual, B2C primeiro
+  function segmentosDisp() {
+    const atual = snaps[0]; if (!atual) return [];
+    const l = [...new Set(atual.rows.map(segDe))];
+    return l.sort((a, b) => (b === 'B2C') - (a === 'B2C'));
+  }
+  function segAtual() { const l = segmentosDisp(); return l.includes(segmento) ? segmento : (l[0] || 'B2C'); }
+  function corteAtual() { const sg = segAtual(), r = snaps[0] && snaps[0].rows.find(x => segDe(x) === sg); return r ? corteDe(r) : 5; }
   function periodos() {
     const map = new Map();
     const atual = snaps[0];
     if (!atual) return map;
-    // NS exato (ATE_5_MIN ÷ TOTAL_ATENDIDAS) para exibir e comparar: evita arredondar duas vezes
-    // (ex.: 1.802 ÷ 2.414 = 74,648% → 74,6%; pelo NS de 4 casas 0,7465 sairia 74,7%)
-    for (const r of atual.rows) { const ns = r.total > 0 ? r.ate / r.total : null; map.set(r.ordem, { ...r, ns, meta: META, status: situacao(ns) }); }
+    const sg = segAtual();
+    for (const r of atual.rows) {
+      if (segDe(r) !== sg || r.semDados || r.volume === 0) continue;   // período sem chamadas não aparece
+      const ns = nsDe(r); map.set(r.ordem, { ...r, ns, meta: META, status: situacao(ns) });
+    }
+    return map;
+  }
+  // todos os segmentos (para conferir mudanças em períodos fechados ao importar)
+  function todosPeriodos() {
+    const map = new Map(); const atual = snaps[0]; if (!atual) return map;
+    for (const r of atual.rows) map.set(P.chave(r), r);
     return map;
   }
 
@@ -109,6 +133,9 @@
   function render() {
     main.classList.toggle('modo-painel', view === 'painel');
     $('#bShare').hidden = !(view === 'painel' && snaps.length);
+    $('#bSeg').hidden = !(view === 'painel' && snaps.length);
+    $('#segNome').textContent = segAtual();
+    fecharMenuSeg();
     if (view === 'painel') renderPainel();
     else if (view === 'dados') preview ? renderPreview() : renderDados();
     else renderHist();
@@ -150,7 +177,9 @@
       rows: pr.rows.map(r => ({
         ordem: r.ordem, tipo: r.tipo, periodo: r.periodo, inicio: r.inicio, fim: r.fim, dias: r.dias, diasPeriodo: r.diasPeriodo,
         completo: r.completo, volume: r.volume, total: r.total, ate: r.ate, ns: r.ns, meta: r.meta, status: r.status, extras: r.extras,
+        segmento: r.segmento, corte: r.corte, base: r.base, semDados: !!r.semDados,
       })),
+      segmentos: pr.segmentos,
     };
   }
 
@@ -198,7 +227,7 @@
   function abrirPrevia(text, arquivo, encoding) {
     const pr = P.parse(text);
     const h = P.hash(text);
-    preview = { pr, hash: h, arquivo, encoding, mudancas: P.compara(pr.rows, periodos()), dup: snaps.find(s => s.hash === h) || null, aceito: false };
+    preview = { pr, hash: h, arquivo, encoding, mudancas: P.compara(pr.rows, todosPeriodos()), dup: snaps.find(s => s.hash === h) || null, aceito: false };
     view = 'dados'; renderPreview(); window.scrollTo(0, 0);
   }
   const msgLi = m => `<li>${m.linha ? `<b>Linha ${m.linha}</b> · ` : ''}${m.col ? `<b>${esc(m.col)}</b>: ` : ''}${esc(m.msg)}</li>`;
@@ -206,26 +235,29 @@
   function renderPreview() {
     const { pr, mudancas, dup } = preview;
     const bloqueia = pr.erros.length > 0 || !!dup || (mudancas.length > 0 && !preview.aceito);
-    const tabelaTipo = t => {
-      const rs = pr.rows.filter(r => r.tipo === t); if (!rs.length) return '';
-      return `<h3 class="sub">${NOME[t]} (${rs.length})</h3><div style="overflow-x:auto"><table class="conf" style="cursor:default">
+    const segs = pr.segmentos || [];
+    const multi = segs.length > 1;
+    const tabelaTipo = (t, sg) => {
+      const rs = pr.rows.filter(r => r.tipo === t && (!sg || r.segmento === sg) && !r.semDados); if (!rs.length) return '';
+      return `<h3 class="sub">${multi ? esc(sg) + ' · ' : ''}${NOME[t]} (${rs.length})</h3><div style="overflow-x:auto"><table class="conf" style="cursor:default">
         <thead><tr><th>PERÍODO</th><th>DIAS</th><th>RECEBIDAS</th><th>NS</th></tr></thead><tbody>
         ${rs.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r))}</td><td class="${r.completo ? '' : 'dias-aberto'}">${r.tipo === 'DIA' ? '1' : r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>
-          <td>${fmtInt(r.volume)}</td><td><span class="pill ${situacao(r.total > 0 ? r.ate / r.total : null)}">${fmtPct(r.total > 0 ? r.ate / r.total : null)}</span></td></tr>`).join('')}
+          <td>${fmtInt(r.volume)}</td><td><span class="pill ${situacao(nsDe(r))}">${fmtPct(nsDe(r))}</span></td></tr>`).join('')}
         </tbody></table></div>`;
     };
     main.innerHTML = `
       <div class="card"><h2>Conferir importação</h2>
         <div class="small muted">${esc(preview.arquivo)} · ${esc(pr.formato || '?')}${preview.encoding ? ' · ' + preview.encoding : ''}</div>
-        ${pr.rows.length ? `<div class="chips"><span class="chip">${pr.resumo.MES} meses</span><span class="chip">${pr.resumo.SEMANA} semanas</span><span class="chip">${pr.resumo.DIA} dias</span><span class="chip">dados até ${fmtData(pr.dataRef)}</span></div>` : ''}
+        ${pr.rows.length && !multi ? `<div class="chips"><span class="chip">${pr.resumo.MES} meses</span><span class="chip">${pr.resumo.SEMANA} semanas</span><span class="chip">${pr.resumo.DIA} dias</span><span class="chip">dados até ${fmtData(pr.dataRef)}</span></div>` : ''}
+        ${pr.rows.length && multi ? segs.map(g => `<div class="chips"><span class="chip"><b>${esc(g.nome)}</b> · ${g.corte} min</span><span class="chip">${g.resumo.MES} meses</span><span class="chip">${g.resumo.SEMANA} semanas</span><span class="chip">${g.resumo.DIA} dias</span>${g.semDados ? `<span class="chip">${g.semDados} sem dados (não aparece${g.semDados > 1 ? 'm' : ''})</span>` : ''}</div>`).join('') + `<div class="chips"><span class="chip">dados até ${fmtData(pr.dataRef)}</span></div>` : ''}
         ${pr.erros.length ? `<div class="banner bad" style="margin-top:8px"><b>${pr.erros.length} erro(s) — corrija o arquivo e importe de novo.</b> Nada foi salvo.</div><ul class="list-msg err">${pr.erros.map(msgLi).join('')}</ul>` : ''}
         ${dup ? `<div class="banner info" style="margin-top:8px">Este arquivo já foi importado em ${fmtDT(dup.id)} — não há nada novo para salvar.</div>` : ''}
         ${!pr.erros.length && !dup ? `<div class="banner ok" style="margin-top:8px"><b>Arquivo conferido.</b> ${pr.rows.length} linhas válidas, NS conferido em todas${pr.info.length ? ' · ' + esc(pr.info.join(' ')) : '.'}</div>` : ''}
         ${pr.colunasExtras.length ? `<div class="banner info small">Colunas novas encontradas: <b>${pr.colunasExtras.map(esc).join(', ')}</b>. Ficam guardadas e aparecem no detalhe de cada período.</div>` : ''}
         ${pr.avisos.length ? `<h3 class="sub">Avisos (não impedem salvar)</h3><ul class="list-msg warn">${pr.avisos.map(msgLi).join('')}</ul>` : ''}
-        ${mudancas.length ? `<h3 class="sub">Mudou em período fechado</h3><ul class="list-msg warn">${mudancas.map(m => `<li><b>${esc(m.periodo)}</b> · ${m.col}: salvo ${m.antes} → arquivo ${m.agora}</li>`).join('')}</ul>
+        ${mudancas.length ? `<h3 class="sub">Mudou em período fechado</h3><ul class="list-msg warn">${mudancas.map(m => `<li><b>${multi ? esc(m.segmento) + ' · ' : ''}${esc(m.periodo)}</b> · ${m.col}: salvo ${m.antes} → arquivo ${m.agora}</li>`).join('')}</ul>
           <label class="chk"><input type="checkbox" id="chkMud" ${preview.aceito ? 'checked' : ''}> Confirmo que esses valores mudaram na origem e o arquivo novo está certo.</label>` : ''}
-        ${tabelaTipo('MES')}${tabelaTipo('SEMANA')}${tabelaTipo('DIA')}
+        ${(multi ? segs.map(g => g.nome) : [null]).map(sg => tabelaTipo('MES', sg) + tabelaTipo('SEMANA', sg) + tabelaTipo('DIA', sg)).join('')}
       </div>
       <div class="row">
         <button class="btn sec" id="bDesc">${pr.erros.length || dup ? 'Voltar' : 'Descartar'}</button>
@@ -267,6 +299,39 @@
   const WD_PLURAL = ['domingos', 'segundas', 'terças', 'quartas', 'quintas', 'sextas', 'sábados'];
   const WD_ULTIMO = ['Último domingo', 'Última segunda', 'Última terça', 'Última quarta', 'Última quinta', 'Última sexta', 'Último sábado'];
   const WD_ANTERIOR = ['o domingo anterior', 'a segunda anterior', 'a terça anterior', 'a quarta anterior', 'a quinta anterior', 'a sexta anterior', 'o sábado anterior'];
+  // ---- segmento (menu flutuante no topo) ----
+  function setSegmento(sg) {
+    fecharMenuSeg();
+    if (sg === segAtual()) return;
+    segmento = sg; sel = null;
+    try { localStorage.setItem('ns-segmento', sg); } catch (e) {}
+    $('#segNome').textContent = segAtual();
+    const y = window.scrollY;
+    renderPainel();
+    window.scrollTo(0, y);
+  }
+  function fecharMenuSeg() {
+    const m = document.querySelector('.segmenu'); if (m) m.remove();
+    const b = $('#bSeg'); if (b) b.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', foraMenuSeg, true);
+  }
+  function foraMenuSeg(e) { if (!e.target.closest('.segmenu') && !e.target.closest('#bSeg')) fecharMenuSeg(); }
+  function abrirMenuSeg() {
+    if (document.querySelector('.segmenu')) { fecharMenuSeg(); return; }
+    const atual = segAtual();
+    const corte = sg => { const r = snaps[0] && snaps[0].rows.find(x => segDe(x) === sg); return r ? corteDe(r) : 5; };
+    const m = document.createElement('div');
+    m.className = 'segmenu'; m.setAttribute('role', 'menu');
+    m.style.top = Math.round($('header').getBoundingClientRect().bottom + 6) + 'px';
+    m.innerHTML = segmentosDisp().map(sg => `<button role="menuitemradio" aria-checked="${sg === atual}" class="${sg === atual ? 'on' : ''}" data-seg="${esc(sg)}"><span>${esc(sg)}<small>NS ${corte(sg)} min</small></span><span class="ck" aria-hidden="true">✓</span></button>`).join('');
+    document.body.appendChild(m);
+    $('#bSeg').setAttribute('aria-expanded', 'true');
+    m.querySelectorAll('button').forEach(b => b.onclick = () => setSegmento(b.dataset.seg));
+    // tocar fora fecha (o pointerdown do toque que abriu já passou: pode registrar na hora)
+    document.addEventListener('pointerdown', foraMenuSeg, true);
+  }
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') fecharMenuSeg(); });
+
   function setFiltroDia(w) {
     filtroDia = w; sel = null;
     const y = window.scrollY;
@@ -457,7 +522,7 @@
     const sNs = dPP == null ? 'sem período anterior' : `${pp(dPP)}${vsPrev}`;
     const dMeta = cur.ns == null ? null : difPP(cur.ns, META);
     const k = `
-        <div class="${kc} kns"><div class="l">NS 5 min</div><div class="v">${fmtPct(cur.ns)}</div><div class="s">${sNs}</div></div>
+        <div class="${kc} kns"><div class="l">NS ${corteAtual()} min</div><div class="v">${fmtPct(cur.ns)}</div><div class="s">${sNs}</div></div>
         <div class="${kc} kvol"><div class="l">Chamadas recebidas</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${sVol}</div></div>
         <div class="${kc} kdist"><div class="l">Distância da meta</div><div class="v">${dMeta == null ? '—' : pp(dMeta)}</div><div class="s">${cur.status ? `<span class="pill ${cur.status}">${stNome(cur.status)}</span>` : ''}</div></div>
         <div class="${kc} kper"><div class="l">${t === 'DIA' && filtroDia != null && !selRow ? WD_ULTIMO[filtroDia] : tituloPeriodo(t, !!selRow)}</div><div class="v">${esc(valorPeriodo(cur))}</div><div class="s">${situacaoPeriodo(cur)}</div></div>`;
@@ -477,7 +542,7 @@
       <div class="kpis">${k}</div>
       ${filtro}
       <div class="card chart"><h2>${t === 'DIA' ? (fd != null ? `Chamadas recebidas e NS · ${WD_PLURAL[fd]}` : 'Chamadas recebidas e NS por dia') : t === 'SEMANA' ? 'Chamadas recebidas e NS por semana' : 'Chamadas recebidas e NS por mês'}</h2>${chartVol(items, t)}
-        <div class="legend"><span><i style="background:var(--barR)"></i>chamadas recebidas</span><span><i class="ln mk" style="border-color:var(--laranjaL)"></i>NS 5 min (eixo à direita)</span></div>
+        <div class="legend"><span><i style="background:var(--barR)"></i>chamadas recebidas</span><span><i class="ln mk" style="border-color:var(--laranjaL)"></i>NS ${corteAtual()} min (eixo à direita)</span></div>
         <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? cap : `Hachurado = ${t === 'MES' ? 'mês' : 'semana'} em aberto (total parcial). ` + dica)}</div></div>
       <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
         <div class="cap${selRow ? ' capsel' : ''}" id="cap1">${cap}</div></div>
@@ -594,7 +659,15 @@
       const [x, py, d] = p, sl = d.ordem === sel, rr = sl ? 5 : 3.6, f = sl ? fsN + .5 : fsN;
       const txt = p1(d.ns), hw = txt.length * f * 0.3 + 1;
       const cima = py - rr - 2.5 - f * 0.22, baixo = py + rr + 2.5 + f * 0.92, lado = hw + rr + 2.5;
-      const cands = [[x, cima, 0], [x, baixo, 0.5], [x - lado, py - f * 0.2, 3], [x + lado, py - f * 0.2, 3], [x - lado, cima, 2], [x + lado, cima, 2], [x - lado, baixo, 2.5], [x + lado, baixo, 2.5]];
+      // posições: em cima, embaixo e ao lado; deslocamento horizontal de 0, meio ou um "lado" (menor = preferido),
+      // encostando na borda do gráfico quando passar dela
+      const cands = [];
+      for (const [b, pv] of [[cima, 0], [baixo, 0.5], [py - f * 0.2, 3]])
+        for (const [dx, ph] of [[0, 0], [-0.5, 1], [0.5, 1], [-1, 2], [1, 2]]) {
+          if (pv === 3 && dx === 0) continue;              // no meio da altura, só ao lado (senão cobre o marcador)
+          const cx = Math.min(Math.max(x + dx * lado, area[0] + hw), area[2] - hw);
+          cands.push([cx, b, pv + ph + Math.abs(cx - x) / lado * 0.5]);
+        }
       let best = null;
       for (const [cx, b, pref] of cands) {
         const bx = [cx - hw, b - f * 0.92, cx + hw, b + f * 0.22];
@@ -725,7 +798,7 @@
   }
   function textoCompartilhar() {
     const c = conteudoMsg();
-    const L = ['📊 *Chamadas recebidas x NS (5 min)*'];
+    const L = [`📊 *Chamadas recebidas x NS (${corteAtual()} min) · ${segAtual()}*`];
     for (const b of c.blocos) {
       const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
       L.push('', `*${b.titulo}*`, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | *${x.ns}*`));
@@ -742,9 +815,9 @@
     const thR = 'style="text-align:right;padding:4px 12px 4px 0;border-bottom:1px solid #D5BFE7;color:#642A90"';
     const td = 'style="padding:3px 12px 3px 0"', tdR = 'style="text-align:right;padding:3px 12px 3px 0"';
     let h = '<div style="font-family:Segoe UI,Arial,sans-serif;font-size:14px">';
-    h += '<p>📊 <b>Chamadas recebidas x NS (5 min)</b></p>';
+    h += `<p>📊 <b>Chamadas recebidas x NS (${corteAtual()} min) · ${esc(segAtual())}</b></p>`;
     for (const b of c.blocos) {
-      h += `<p><b>${esc(b.titulo)}</b></p><table style="border-collapse:collapse"><thead><tr><th ${th}>${esc(b.col)}</th><th ${thR}>Chamadas recebidas</th><th ${thR}>NS 5 min</th></tr></thead><tbody>`;
+      h += `<p><b>${esc(b.titulo)}</b></p><table style="border-collapse:collapse"><thead><tr><th ${th}>${esc(b.col)}</th><th ${thR}>Chamadas recebidas</th><th ${thR}>NS ${corteAtual()} min</th></tr></thead><tbody>`;
       for (const x of b.linhas) h += `<tr><td ${td}>${esc(x.lab)}</td><td ${tdR}>${esc(x.num)}</td><td ${tdR}><b style="color:${COR_TEAMS[x.status] || '#1F1530'}">${esc(x.ns)}</b></td></tr>`;
       h += '</tbody></table>';
     }
@@ -755,7 +828,7 @@
   // versão em texto simples (para quem colar onde não há formatação)
   function textoSimples() {
     const c = conteudoMsg();
-    const L = ['📊 Chamadas recebidas x NS (5 min)'];
+    const L = [`📊 Chamadas recebidas x NS (${corteAtual()} min) · ${segAtual()}`];
     for (const b of c.blocos) {
       const lw = Math.max(...b.linhas.map(x => x.lab.length)), nw = Math.max(...b.linhas.map(x => x.num.length));
       L.push('', b.titulo, ...b.linhas.map(x => `▫️ ${x.lab.padEnd(lw)} → ${x.num.padStart(nw)} | ${x.ns}`));
@@ -818,7 +891,7 @@
   <defs><linearGradient id="hd" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${PAL.p800}"/><stop offset=".6" stop-color="${PAL.p700}"/><stop offset="1" stop-color="${PAL.p500}"/></linearGradient></defs>
   <rect width="${W}" height="${H}" fill="${PAL.bg}"/>
   <rect width="${W}" height="200" fill="url(#hd)"/>
-  ${T(60, 92, 52, 'NS 5 min · B2C Suporte', { w: 800, f: '#FFFFFF' })}
+  ${T(60, 92, 52, `NS ${corteAtual()} min · ${segAtual()} Suporte`, { w: 800, f: '#FFFFFF' })}
   ${T(60, 146, 29, `Nível de serviço diário · dados até ${fmtData(d.dataRef || c.inicio)}`, { f: '#FFFFFF', op: .88 })}
   <rect x="48" y="236" width="984" height="300" rx="28" fill="${PAL.card}" stroke="${PAL.line}" stroke-width="2"/>
   ${T(92, 300, 30, `Último dia · ${P.rotulo(c)} · ${['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'][d.wd(c)]}`, { f: PAL.ink2 })}
@@ -887,7 +960,7 @@
       const ok = await copiarFormatado(html, simples);
       toast(ok ? 'Copiado ✓ Agora cole no Teams (Ctrl+V)' : 'Não consegui copiar — selecione a tabela e copie.', 4000);
     };
-    const nome = `ns-diario-${d.cur.inicio}.png`;
+    const nome = `ns-diario-${segAtual().toLowerCase()}-${d.cur.inicio}.png`;
     try {
       blob = await pngDeSvg(svgCompartilhar(d));   // gera antes do toque em Enviar (o celular exige o toque "fresco" para compartilhar)
       file = new File([blob], nome, { type: 'image/png' });
@@ -947,7 +1020,7 @@
     bg.innerHTML = `<div class="sheet"><h3>Dados até ${fmtData(s.dataRef)}</h3>
       <div class="small muted">${esc(s.arquivo)} · ${s.origem} · recebido ${fmtDT(s.id)}${s.mudancasAceitas && s.mudancasAceitas.length ? ` · ${s.mudancasAceitas.length} alteração(ões) em período fechado confirmada(s)` : ''}</div>
       <table class="conf" style="cursor:default;margin-top:8px"><thead><tr><th>PERÍODO</th><th>DIAS</th><th>RECEBIDAS</th><th>NS</th></tr></thead><tbody>
-      ${s.rows.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r, r.tipo === 'SEMANA'))}</td><td>${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td><td>${fmtInt(r.volume)}</td><td>${fmtPct(r.total > 0 ? r.ate / r.total : null)}</td></tr>`).join('')}
+      ${s.rows.filter(r => !r.semDados).map(r => `<tr style="cursor:default"><td>${new Set(s.rows.map(segDe)).size > 1 ? esc(segDe(r)) + ' · ' : ''}${esc(P.rotulo(r, r.tipo === 'SEMANA'))}</td><td>${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td><td>${fmtInt(r.volume)}</td><td>${fmtPct(nsDe(r))}</td></tr>`).join('')}
       </tbody></table>
       <div class="row" style="margin-top:12px"><button class="btn sec" id="cClose">Fechar</button><button class="btn danger" id="cDel">Excluir</button></div></div>`;
     document.body.appendChild(bg);
@@ -993,5 +1066,6 @@
   })();
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   $('#bShare').addEventListener('click', abrirCompartilhar);
-  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), teams: () => htmlTeams(), simples: () => textoSimples(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
+  $('#bSeg').addEventListener('click', abrirMenuSeg);
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus, segmento: segAtual(), segmentos: segmentosDisp(), corte: corteAtual() }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), teams: () => htmlTeams(), simples: () => textoSimples(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
 })();
