@@ -199,7 +199,7 @@
       if (r.semDados && nsA.v != null && nsA.v !== 0) E(N('NS_5_MIN'), `${get('NS_5_MIN')} com VOLUME 0`);
       const mt = decimal(get('META_NS'));
       if (mt.erro) E('META_NS', mt.erro);
-      r.meta = mt.v != null ? mt.v : 0.8;
+      r.meta = mt.v != null ? mt.v : 0.9;   // sem META_NS no arquivo: 90%
       if (r.meta <= 0 || r.meta > 1) E('META_NS', `meta ${get('META_NS')} fora de 0–1`);
       r.stArquivo = normTxt(get('STATUS_NS'));
 
@@ -282,8 +282,11 @@
       if (inc.length > 1) res.avisos.push({ msg: `${pre}${inc.length} ${t === 'MES' ? 'meses' : 'semanas'} incompletos — normalmente só o último está aberto` });
       if (inc.length === 1 && inc[0] !== doTipo.slice(-1)[0]) res.avisos.push({ linha: inc[0].linha, msg: `${pre}${inc[0].periodo} está incompleto mas não é o último` });
     }
-    const metas = [...new Set(res.rows.map(r => r.meta))];
-    if (metas.length > 1) res.avisos.push({ msg: `META_NS diferente entre linhas: ${metas.join(' / ')}` });
+    // meta diferente DENTRO de um segmento vale aviso (entre segmentos é normal: cada um tem a sua)
+    for (const sg of segs) {
+      const metas = [...new Set(res.rows.filter(r => r.segmento === sg).map(r => r.meta))];
+      if (metas.length > 1) res.avisos.push({ msg: `${segs.length > 1 ? sg + ': ' : ''}META_NS diferente entre linhas: ${metas.join(' / ')}` });
+    }
     const ultDia = res.rows.filter(r => r.tipo === 'DIA').map(r => r.inicio).sort().slice(-1)[0];
     res.dataRef = ultDia || (res.rows.length ? res.rows.map(r => r.fim).sort().slice(-1)[0] : null);
     return res;

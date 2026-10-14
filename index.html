@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>NS Painel</title>
+<title>Painel - Nível de Serviço</title>
 <meta name="theme-color" content="#642A90">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -186,6 +186,7 @@ html,body{overflow-x:hidden}
 .shmsg{white-space:pre-wrap;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin:0 0 12px;color:var(--ink2)}
 header h1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 @media (max-width:480px){header .ver{display:none}}
+@media (max-width:340px){header h1{font-size:16px;letter-spacing:0}}
 /* aba Teams */
 .shtabs{margin-bottom:10px}
 .shteams{background:#fff;color:#1F1530;border:1px solid var(--line);border-radius:10px;padding:6px 12px;margin:0 0 12px;max-height:46vh;overflow:auto}
@@ -238,7 +239,7 @@ table.conf td.nd{color:var(--ink3)}
 </style>
 </head>
 <body>
-<header><h1>NS Painel</h1><span class="ver" id="ver"></span><button id="bSeg" class="hbtn segbtn" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Trocar segmento"><span id="segNome">B2C</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></header>
+<header><h1>Painel - Nível de Serviço</h1><span class="ver" id="ver"></span><button id="bSeg" class="hbtn segbtn" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Trocar segmento"><span id="segNome">B2C</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button></header>
 <main id="main"></main>
 <button id="bShare" class="fab" hidden aria-label="Compartilhar (WhatsApp ou Teams)" title="Compartilhar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg></button>
 <nav id="nav">

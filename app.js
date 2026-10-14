@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '3.6.0';
+  const APP_VERSION = '3.6.1';
   const P = window.NSData;
   const $ = s => document.querySelector(s);
   const main = $('#main');
@@ -56,11 +56,14 @@
   }
   // O painel mostra SOMENTE o TXT mais recente (snaps[0]), exatamente como ele está:
   // nada de completar com períodos de arquivos anteriores (eles ficam só no Histórico).
-  // Meta definida pela coordenação: 90% (o META_NS do arquivo é ignorado). Situação recalculada:
-  // Meta atingida ≥ 90% · Em atenção ≥ 70% · Crítico < 70%
-  const META = 0.9;
+  // Meta: vem da coluna META_NS de cada linha (cada segmento/período pode ter a sua; mudou no select,
+  // muda no app). Só se o arquivo não trouxer META_NS vale 90%. Situação recalculada pela meta da linha:
+  // Meta atingida ≥ meta · Em atenção ≥ 70% · Crítico < 70%
+  const META_PADRAO = 0.9;
+  const metaDe = r => r && r.meta > 0 && r.meta <= 1 ? r.meta : META_PADRAO;
+  const fmtMeta = m => (Math.round(m * 1000 + 1e-9) / 10).toFixed(1).replace('.', ',').replace(/,0$/, '') + '%';
   // situação pelo NS exibido (89,96% aparece 90,0% → Meta atingida, distância 0,0)
-  const situacao = ns => { if (ns == null) return null; const v = Math.round(ns * 1000 + 1e-9) / 10; return v >= META * 100 ? 'VERDE' : v >= 70 ? 'AMARELO' : 'VERMELHO'; };
+  const situacao = (ns, meta = META_PADRAO) => { if (ns == null) return null; const v = Math.round(ns * 1000 + 1e-9) / 10, m = Math.round(meta * 1000 + 1e-9) / 10; return v >= m ? 'VERDE' : v >= 70 ? 'AMARELO' : 'VERMELHO'; };
   // Segmentos (B2C, COE…): cada um com o seu tempo de corte e a sua base do NS, lidos do TXT.
   // Arquivo antigo (sem SEGMENTO) = B2C, 5 min, NS ÷ atendidas.
   const segDe = r => r.segmento || 'B2C';
@@ -84,7 +87,7 @@
     const sg = segAtual();
     for (const r of atual.rows) {
       if (segDe(r) !== sg || r.semDados || r.volume === 0) continue;   // período sem chamadas não aparece
-      const ns = nsDe(r); map.set(r.ordem, { ...r, ns, meta: META, status: situacao(ns) });
+      const ns = nsDe(r), meta = metaDe(r); map.set(r.ordem, { ...r, ns, meta, status: situacao(ns, meta) });
     }
     return map;
   }
@@ -242,7 +245,7 @@
       return `<h3 class="sub">${multi ? esc(sg) + ' · ' : ''}${NOME[t]} (${rs.length})</h3><div style="overflow-x:auto"><table class="conf" style="cursor:default">
         <thead><tr><th>PERÍODO</th><th>DIAS</th><th>RECEBIDAS</th><th>NS</th></tr></thead><tbody>
         ${rs.map(r => `<tr style="cursor:default"><td>${esc(P.rotulo(r))}</td><td class="${r.completo ? '' : 'dias-aberto'}">${r.tipo === 'DIA' ? '1' : r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>
-          <td>${fmtInt(r.volume)}</td><td><span class="pill ${situacao(nsDe(r))}">${fmtPct(nsDe(r))}</span></td></tr>`).join('')}
+          <td>${fmtInt(r.volume)}</td><td><span class="pill ${situacao(nsDe(r), metaDe(r))}">${fmtPct(nsDe(r))}</span></td></tr>`).join('')}
         </tbody></table></div>`;
     };
     main.innerHTML = `
@@ -511,7 +514,6 @@
     const cur = selRow || items[items.length - 1];
     const ic = serie.indexOf(cur);
     const prev = ic > 0 ? serie[ic - 1] : null;
-    const meta = META;
     const dPP = prev && cur.ns != null && prev.ns != null ? difPP(cur.ns, prev.ns) : null;
     const kc = selRow ? 'kpi ksel' : 'kpi';
     // 4 cards no mesmo padrão: título · valor · comparação com o período anterior
@@ -520,7 +522,7 @@
     const dVol = varRecebidas(cur, prev);
     const sVol = !prev ? 'sem período anterior' : dVol == null ? '<span class="parc">parcial</span> · sem variação' : `${pc(dVol / 100)}${vsPrev}`;
     const sNs = dPP == null ? 'sem período anterior' : `${pp(dPP)}${vsPrev}`;
-    const dMeta = cur.ns == null ? null : difPP(cur.ns, META);
+    const dMeta = cur.ns == null ? null : difPP(cur.ns, cur.meta);
     const k = `
         <div class="${kc} kns"><div class="l">NS ${corteAtual()} min</div><div class="v">${fmtPct(cur.ns)}</div><div class="s">${sNs}</div></div>
         <div class="${kc} kvol"><div class="l">Chamadas recebidas</div><div class="v">${fmtInt(cur.volume)}</div><div class="s">${sVol}</div></div>
@@ -534,7 +536,7 @@
         ${[0, 1, 2, 3, 4, 5, 6].map(w => `<button data-wd="${w}" class="${w === 0 ? 'dom' : ''}${fd === w ? ' on' : ''}" aria-pressed="${fd === w}" ${diasDisp.has(w) ? '' : 'disabled'}>${SEMANA_ABR[w]}</button>`).join('')}
         ${fd != null ? '<button class="wdx" id="bWdx" aria-label="Remover filtro e voltar aos dias corridos">✕</button>' : ''}
       </div>`;
-    const legNS = `<div class="legend"><span><i style="background:var(--verdeS)"></i>Meta atingida</span><span><i style="background:var(--amareloS)"></i>Em atenção</span><span><i style="background:var(--vermelhoS)"></i>Crítico</span>${t === 'DIA' ? '' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta ${fmtPct(META).replace(',0', '')}</span></div>`;
+    const legNS = `<div class="legend"><span><i style="background:var(--verdeS)"></i>Meta atingida</span><span><i style="background:var(--amareloS)"></i>Em atenção</span><span><i style="background:var(--vermelhoS)"></i>Crítico</span>${t === 'DIA' ? '' : `<span><i style="background:repeating-linear-gradient(45deg,var(--p300) 0 3px,transparent 3px 6px)"></i>${t === 'MES' ? 'mês aberto' : 'semana aberta'}</span>`}<span><i class="ln dash"></i>meta ${fmtMeta(cur.meta)}</span></div>`;
     const cab = t === 'DIA' ? 'DIA' : t === 'SEMANA' ? 'SEMANA' : 'MÊS';
     const dica = 'Toque numa coluna para selecionar · toque de novo para limpar.';
     const cap = selRow ? esc(detalhe(selRow)) : fd != null ? `Só ${WD_PLURAL[fd]} · ${items.length} mais recentes. ${dica}` : dica;
@@ -595,12 +597,17 @@
     return `<path d="M${x},${yBase} V${yTop + r} A${r},${r} 0 0 1 ${x + r},${yTop} H${x + w - r} A${r},${r} 0 0 1 ${x + w},${yTop + r} V${yBase} Z" fill="${fill}" ${extra}/>`;
   }
   const largura = bw => Math.max(8, Math.min(28, bw * 0.56));
+  // linha tracejada da meta: um trecho por coluna, na meta daquela coluna (meta igual = linha reta contínua)
+  function linhaMeta(items, x0, bw, y, cor, dash, sw) {
+    const segs = []; let ini = 0;
+    for (let i = 1; i <= items.length; i++) if (i === items.length || metaDe(items[i]) !== metaDe(items[ini])) { segs.push([ini, i, metaDe(items[ini])]); ini = i; }
+    return segs.map(([a, b, m]) => `<line class="metaln" x1="${(x0 + a * bw).toFixed(1)}" x2="${(x0 + b * bw).toFixed(1)}" y1="${y(m).toFixed(1)}" y2="${y(m).toFixed(1)}" stroke="${cor}" stroke-dasharray="${dash}" stroke-width="${sw}"/>`).join('');
+  }
   function chartNs(items, t) {
     const mensal = t !== 'DIA';
     const W = 360, H = 220, L = 22, R = 6, T = 24, B = 40, iw = W - L - R, ih = H - T - B;
-    const meta = META;
     const vals = items.map(d => d.ns ?? 0);
-    const lo = Math.max(0, Math.floor((Math.min(...vals, meta) - 0.05) * 10) / 10), hi = 1;
+    const lo = Math.max(0, Math.floor((Math.min(...vals, ...items.map(metaDe)) - 0.05) * 10) / 10), hi = 1;
     const y = v => T + ih - (v - lo) / (hi - lo) * ih;
     const bw = iw / items.length;
     const w = largura(bw);
@@ -615,7 +622,7 @@
     const hits = items.map((d, i) => `<rect class="hit" data-i="${i}" x="${L + i * bw}" y="${T - 14}" width="${bw}" height="${ih + B + 14}" fill="transparent"/>`).join('');
     return `<svg viewBox="0 0 ${W} ${H}" id="ch1" role="img" aria-label="NS">
       <defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="3" height="6" fill="#fff" fill-opacity=".5"/></pattern></defs>
-      ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}<line x1="${L}" x2="${W - R}" y1="${y(meta)}" y2="${y(meta)}" stroke="${css('--ink2')}" stroke-dasharray="4 3" stroke-width="1.5"/>
+      ${faixaSel(items, L, bw, T, ih + B)}${g}${bars}${linhaMeta(items, L, bw, y, css('--ink2'), '4 3', 1.5)}
       ${vl}${xLabels(items, t, L, bw, H)}${hits}</svg>`;
   }
   // Chamadas recebidas (barras com o total, eixo esquerdo) + NS 5 min (linha com marcadores e rótulo, eixo direito)
@@ -627,8 +634,7 @@
     const nice = Math.pow(10, Math.floor(Math.log10(max))); const stepV = max / nice > 5 ? nice * 2 : max / nice > 2 ? nice : nice / 2;
     const y = v => T + ih - v / max * ih;
     // eixo direito do NS: mesma faixa usada no gráfico de NS
-    const meta = META;
-    const lo = Math.max(0, Math.floor((Math.min(...items.map(d => d.ns ?? 1), meta) - 0.05) * 10) / 10), hi = 1;
+    const lo = Math.max(0, Math.floor((Math.min(...items.map(d => d.ns ?? 1), ...items.map(metaDe)) - 0.05) * 10) / 10), hi = 1;
     const yn = v => T + ih - (v - lo) / (hi - lo) * ih;
     const bw = iw / items.length;
     const w = largura(bw);
@@ -759,7 +765,7 @@
     const cur = dias[dias.length - 1], prev = dias.length > 1 ? dias[dias.length - 2] : null;
     const wd = r => { const [y, m, d] = r.inicio.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); };
     const dPP = prev && cur.ns != null && prev.ns != null ? difPP(cur.ns, prev.ns) : null;
-    return { items, cur, prev, dPP, wd, meta: META, dataRef: snaps[0] && snaps[0].dataRef };
+    return { items, cur, prev, dPP, wd, meta: metaDe(cur), dataRef: snaps[0] && snaps[0].dataRef };
   }
   const ddmm = r => r.inicio.slice(8, 10) + '/' + r.inicio.slice(5, 7);
   const pct1 = v => p1(v) + '%';
@@ -864,7 +870,7 @@
     const dCor = d.dPP == null || d.dPP === 0 ? PAL.ink2 : d.dPP > 0 ? PAL.up : PAL.down;
     // ---- gráfico ----
     const it = d.items, CX0 = 120, CX1 = 1000, CY0 = 720, CY1 = 1060;
-    const lo = Math.max(0, Math.floor((Math.min(...it.map(r => r.ns ?? 0), d.meta) - 0.05) * 10) / 10), hi = 1;
+    const lo = Math.max(0, Math.floor((Math.min(...it.map(r => r.ns ?? 0), ...it.map(metaDe)) - 0.05) * 10) / 10), hi = 1;
     const y = v => CY1 - (v - lo) / (hi - lo) * (CY1 - CY0);
     const bw = (CX1 - CX0) / it.length, w = Math.max(20, Math.min(64, bw * 0.56)), r = 8;
     let g = '';
@@ -876,7 +882,7 @@
       return CY1 - yt <= 0 ? '' : `<path d="M${bx},${CY1} V${yt + rr} A${rr},${rr} 0 0 1 ${bx + rr},${yt} H${bx + w - rr} A${rr},${rr} 0 0 1 ${bx + w},${yt + rr} V${CY1} Z" fill="${PAL[x.status] || PAL.ink3}"/>`;
     }).join('');
     const vals = it.map((x, i) => x.ns == null ? '' : T(CX0 + i * bw + bw / 2, y(x.ns) - 14, 30, p1(x.ns), { w: 800, a: 'middle', halo: true }));
-    const meta = `<line x1="${CX0}" x2="${CX1}" y1="${y(d.meta)}" y2="${y(d.meta)}" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="12 9"/>`;
+    const meta = linhaMeta(it, CX0, bw, y, PAL.ink2, '12 9', 3);
     const xl = it.map((x, i) => {
       const cx = CX0 + i * bw + bw / 2, dom = d.wd(x) === 0;
       return T(cx, CY1 + 44, 30, String(+x.inicio.slice(8, 10)), { w: 700, a: 'middle', f: dom ? PAL.dom : PAL.ink2 }) +
@@ -884,7 +890,7 @@
     }).join('');
     const legItem = (x, cor, txt) => `<rect x="${x}" y="1173" width="22" height="22" rx="5" fill="${cor}"/>` + T(x + 32, 1192, 25, txt, { f: PAL.ink2 });
     const leg = legItem(96, PAL.VERDE, 'Meta atingida') + legItem(330, PAL.AMARELO, 'Em atenção') + legItem(540, PAL.VERMELHO, 'Crítico') +
-      `<line x1="700" x2="746" y1="1184" y2="1184" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="10 7"/>` + T(758, 1192, 25, `meta ${pct1(d.meta).replace(',0%', '%')}`, { f: PAL.ink2 });
+      `<line x1="700" x2="746" y1="1184" y2="1184" stroke="${PAL.ink2}" stroke-width="3" stroke-dasharray="10 7"/>` + T(758, 1192, 25, `meta ${fmtMeta(d.meta)}`, { f: PAL.ink2 });
     const agora = new Date();
     const gerado = `Gerado em ${agora.toLocaleDateString('pt-BR')} às ${agora.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
@@ -898,7 +904,7 @@
   ${T(88, 418, 112, pct1(c.ns), { w: 800 })}
   <rect x="92" y="446" width="${pillW}" height="52" rx="26" fill="${pc[0]}"/>
   ${T(92 + pillW / 2, 481, 27, stT, { w: 700, f: pc[1], a: 'middle' })}
-  ${T(92 + pillW + 22, 481, 26, `meta ${pct1(d.meta).replace(',0%', '%')}`, { f: PAL.ink3 })}
+  ${T(92 + pillW + 22, 481, 26, `meta ${fmtMeta(d.meta)}`, { f: PAL.ink3 })}
   <line x1="600" x2="600" y1="276" y2="496" stroke="${PAL.line}" stroke-width="2"/>
   ${T(640, 300, 30, d.prev ? `vs ${P.rotulo(d.prev)}` : 'vs dia anterior', { f: PAL.ink2 })}
   ${T(636, 384, 66, d.dPP == null ? '—' : ppTxt(d.dPP), { w: 800, f: dCor })}

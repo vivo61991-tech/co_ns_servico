@@ -1,4 +1,4 @@
-# NS Painel · B2C Suporte (v3.6.0)
+# Painel - Nível de Serviço (v3.6.1)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
@@ -43,4 +43,5 @@ No modo **Dia**, acima dos gráficos ficam as cápsulas **DOM SEG TER QUA QUI SE
 - Para ter 7 de cada dia da semana, o TXT precisa trazer pelo menos 49 dias (com 42 dias aparecem 6).
 
 ## Meta
-A meta do NS é **90%**, definida no app (a coluna META_NS do arquivo é ignorada). Situação: Meta atingida ≥ 90% · Em atenção ≥ 70% · Crítico < 70%.
+A meta vem da coluna **`META_NS`** de cada linha: cada segmento (e cada período) pode ter a sua, e uma mudança no select aparece no app sem mexer no código. Sem a coluna no arquivo, vale 90%.
+Situação: Meta atingida ≥ meta · Em atenção ≥ 70% · Crítico < 70%.
