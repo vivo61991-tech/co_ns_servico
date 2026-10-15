@@ -1,8 +1,10 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '3.6.1';
+  const APP_VERSION = '3.7.0';
   const P = window.NSData;
+  // Problemas sistêmicos (sistemas.js): só com a mesma versão do app (evita misturar arquivos de versões diferentes)
+  const SIS = window.NSSistemas && window.NSSistemas.versao === APP_VERSION ? window.NSSistemas : null;
   const $ = s => document.querySelector(s);
   const main = $('#main');
   $('#ver').textContent = 'v' + APP_VERSION;
@@ -52,7 +54,7 @@
   let modo = (() => { try { const m = localStorage.getItem('ns-modo'); return ['DIA', 'SEMANA', 'MES'].includes(m) ? m : 'DIA'; } catch (e) { return 'DIA'; } })();
 
   async function reload() {
-    snaps = (await dbAll()).sort((a, b) => (b.dataRef || '').localeCompare(a.dataRef || '') || b.id - a.id);
+    snaps = (await dbAll()).filter(s => s.id !== SIS_ID).sort((a, b) => (b.dataRef || '').localeCompare(a.dataRef || '') || b.id - a.id);
   }
   // O painel mostra SOMENTE o TXT mais recente (snaps[0]), exatamente como ele está:
   // nada de completar com períodos de arquivos anteriores (eles ficam só no Histórico).
@@ -148,7 +150,7 @@
   async function buscarPublicado(manual) {
     if (location.protocol === 'file:') return;
     try { await buscarPublicado2(manual); }
-    finally { if (view === 'dados' && !preview) renderDados(); }
+    finally { await buscarSistemas().catch(() => {}); if (view === 'dados' && !preview) renderDados(); }
   }
   async function buscarPublicado2(manual) {
     let res;
@@ -184,6 +186,55 @@
       })),
       segmentos: pr.segmentos,
     };
+  }
+
+  // ---------------- Problemas sistêmicos (sistemas.txt) ----------------
+  // O arquivo fica guardado no aparelho (registro "sistemas" do banco) para abrir sem internet.
+  // Sem arquivo publicado: o card some. Arquivo com erro em todas as linhas: fica o último válido, com aviso.
+  const SIS_ID = 'sistemas';
+  let sisDados = null;     // resultado de NSSistemas.ler
+  let sisHash = null, sisAviso = '';
+  async function carregarSistemasSalvos() {
+    if (!SIS) return;
+    try { const r = await dbGet(SIS_ID); if (r && r.texto) { const d = SIS.ler(r.texto); if (d.itens.length) { sisDados = d; sisHash = r.hash; } } } catch (e) {}
+  }
+  // texto = conteúdo novo; null = não há arquivo publicado (apaga o guardado)
+  async function aplicarSistemas(texto) {
+    if (!SIS) return false;
+    if (texto == null) {
+      const tinha = !!(sisDados || sisAviso);
+      sisDados = null; sisHash = null; sisAviso = '';
+      try { await dbDel(SIS_ID); } catch (e) {}
+      return tinha;
+    }
+    const h = P.hash(texto);
+    if (h === sisHash) return false;
+    const d = SIS.ler(texto);
+    if (!d.itens.length) { const a = 'O arquivo de sistemas publicado tem erros e foi ignorado' + (sisDados ? ' — mostrando o último válido' : '') + ': ' + d.erros.slice(0, 3).join(' · '); const mudou = a !== sisAviso; sisAviso = a; return mudou; }
+    try {
+      await dbPut({ id: SIS_ID, texto, hash: h, em: Date.now() });
+      const back = await dbGet(SIS_ID);
+      if (!back || back.texto !== texto) throw new Error('conferência');
+    } catch (e) { /* não gravou: mostra assim mesmo; na próxima abertura busca de novo */ }
+    sisDados = d; sisHash = h; sisAviso = '';
+    return true;
+  }
+  async function buscarSistemas() {
+    if (!SIS || location.protocol === 'file:') return;
+    let res;
+    try { res = await fetch('sistemas.txt', { cache: 'no-store' }); } catch (e) { return; }   // sem conexão: fica o guardado
+    let mudou = false;
+    if (res.status === 404) mudou = await aplicarSistemas(null);
+    else if (res.ok) mudou = await aplicarSistemas(P.decode(new Uint8Array(await res.arrayBuffer())).text);
+    if (mudou) redesenharPainel();
+  }
+  function redesenharPainel() {
+    if (view !== 'painel' || preview || !snaps.length) return;
+    const y = window.scrollY; renderPainel(); window.scrollTo(0, y);
+  }
+  function cardSistemas(t, items) {
+    if (!SIS || (!sisDados && !sisAviso)) return '';
+    return SIS.card(sisDados, items, { modo: t, sel, filtro: t === 'DIA' && filtroDia != null ? WD_PLURAL[filtroDia] : null, erros: sisDados ? sisDados.erros : [], avisos: sisDados ? sisDados.avisos : [], aviso: sisAviso });
   }
 
   // ---------------- Dados (importação) ----------------
@@ -507,6 +558,7 @@
     main.querySelectorAll('.wdf button[data-wd]').forEach(b => b.onclick = () => { const w = +b.dataset.wd; setFiltroDia(filtroDia === w ? null : w); });
     if ($('#bWdx')) $('#bWdx').onclick = () => setFiltroDia(null);
     bindTaps(items);
+    if (SIS) SIS.ligar(main, { dados: sisDados, items, rerender: redesenharPainel, toggleSel });
   }
 
   function painelTipo(t, items, serie, all) {
@@ -548,6 +600,7 @@
         <div class="cap${selRow ? ' capsel' : ''}" id="cap2">${selRow ? cap : (t === 'DIA' ? cap : `Hachurado = ${t === 'MES' ? 'mês' : 'semana'} em aberto (total parcial). ` + dica)}</div></div>
       <div class="card chart"><h2>${tituloNS}</h2>${chartNs(items, t)}${legNS}
         <div class="cap${selRow ? ' capsel' : ''}" id="cap1">${cap}</div></div>
+      ${cardSistemas(t, items)}
       <div class="card"><h2>${t === 'DIA' ? (fd != null ? Cap(WD_PLURAL[fd]) : 'Dias') : t === 'SEMANA' ? 'Semanas' : 'Meses'}</h2><div style="overflow-x:auto"><table class="conf tsel">
         <thead><tr><th>${cab}</th>${t === 'DIA' ? '' : '<th>DIAS</th>'}<th>RECEB.</th><th>VAR.</th><th>NS</th><th>VAR. NS</th></tr></thead><tbody>
         ${[...items].reverse().map(r => { const ant = serie[serie.indexOf(r) - 1]; return `<tr data-ordem="${r.ordem}" class="${r.ordem === sel ? 'sel' : ''}" aria-selected="${r.ordem === sel}"><td>${esc(P.rotulo(r, t !== 'DIA'))}</td>${t === 'DIA' ? '' : `<td class="${r.completo ? '' : 'dias-aberto'}">${r.completo ? r.dias : r.dias + '/' + r.diasPeriodo}</td>`}
@@ -1065,7 +1118,7 @@
   // ---------------- Início ----------------
   window.addEventListener('beforeunload', e => { if (preview) { e.preventDefault(); e.returnValue = ''; } });
   (async () => {
-    try { await reload(); } catch (e) { main.innerHTML = `<div class="card"><div class="banner bad">Erro ao abrir os dados: ${esc(e.message)}</div></div>`; return; }
+    try { await reload(); await carregarSistemasSalvos(); } catch (e) { main.innerHTML = `<div class="card"><div class="banner bad">Erro ao abrir os dados: ${esc(e.message)}</div></div>`; return; }
     if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
     go(snaps.length ? 'painel' : 'dados');
     buscarPublicado(false);
@@ -1073,5 +1126,5 @@
   if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
   $('#bShare').addEventListener('click', abrirCompartilhar);
   $('#bSeg').addEventListener('click', abrirMenuSeg);
-  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus, segmento: segAtual(), segmentos: segmentosDisp(), corte: corteAtual() }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), teams: () => htmlTeams(), simples: () => textoSimples(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
+  window.__ns = { version: APP_VERSION, state: () => ({ snaps, preview, view, modo, pubStatus, segmento: segAtual(), segmentos: segmentosDisp(), corte: corteAtual(), sistemas: { carregado: !!sisDados, itens: sisDados ? sisDados.itens.length : 0, hash: sisHash, aviso: sisAviso, modulo: !!SIS } }), reload, buscarPublicado, share: { dados: dadosCompartilhar, texto: () => textoCompartilhar(), teams: () => htmlTeams(), simples: () => textoSimples(), svg: () => svgCompartilhar(dadosCompartilhar()), png: async () => { const b = await pngDeSvg(svgCompartilhar(dadosCompartilhar())); return { size: b.size, type: b.type, url: await new Promise(r => { const f = new FileReader(); f.onload = () => r(f.result); f.readAsDataURL(b); }) }; } } };
 })();

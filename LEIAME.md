@@ -1,4 +1,4 @@
-# Painel - Nível de Serviço (v3.6.1)
+# Painel - Nível de Serviço (v3.7.0)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
@@ -45,3 +45,24 @@ No modo **Dia**, acima dos gráficos ficam as cápsulas **DOM SEG TER QUA QUI SE
 ## Meta
 A meta vem da coluna **`META_NS`** de cada linha: cada segmento (e cada período) pode ter a sua, e uma mudança no select aparece no app sem mexer no código. Sem a coluna no arquivo, vale 90%.
 Situação: Meta atingida ≥ meta · Em atenção ≥ 70% · Crítico < 70%.
+
+## Problemas sistêmicos (`sistemas.txt`)
+Card logo abaixo do gráfico de NS, acima da tabela. Ele aparece quando existe o arquivo **`sistemas.txt`** na mesma pasta do `data.txt`. Sem o arquivo, o card some.
+- **Atualizar:** substitua o `sistemas.txt` no repositório, como no `data.txt`. É o TXT do SQL Developer, separado por tabulação e com o cabeçalho na 1ª linha. Colunas obrigatórias: `SISTEMA, DATA_INICIO, DATA_FIM`. As demais (`ID, CHAMADO, STATUS, TIPO_FALHA`…) aparecem no detalhe, e coluna nova vai para "Outras colunas".
+- **Todos os chamados**: o card não filtra por segmento. É o mesmo no B2C e no COE.
+- **Mesmo calendário dos gráficos de cima**: as colunas são os mesmos dias, semanas ou meses (inclusive com o filtro de dia da semana).
+  - Período fora do arquivo de sistemas fica **listrado ("sem dados de sistemas")**. É o período antes do 1º chamado ou depois da última atualização.
+  - É diferente de célula lisa, que significa "sem problema".
+- **Expediente 08h–20h**: cada barra é o trecho do chamado dentro do expediente.
+  - O Total junta todos os sistemas; sobreposição conta uma vez.
+  - Indevido aparece hachurado e fica fora das contas.
+  - Chamado só fora do expediente aparece como um tracejado.
+- **Percentual** = tempo no expediente ÷ expediente do período inteiro (dia 12h; semana 7 × 12h; mês dias × 12h).
+- **Toques**:
+  - O cabeçalho da coluna seleciona o período no painel inteiro, como nos gráficos.
+  - Selecionar nos gráficos ou na tabela destaca a mesma coluna.
+  - Célula com chamado abre a lista; item da lista abre o detalhe.
+- **Sempre abre fechado**, só com a linha Total. A seta abre com todos os sistemas.
+- **Conferência**: linha com data inválida é ignorada e aparece num aviso no card.
+  - Se o arquivo inteiro for inválido, o app mantém o último válido e avisa.
+  - A cópia fica no aparelho para abrir sem internet.
