@@ -1,7 +1,7 @@
 /* NS Painel — app (v2: dados por TXT) */
 (function () {
   'use strict';
-  const APP_VERSION = '3.7.1';
+  const APP_VERSION = '3.7.2';
   const P = window.NSData;
   // Problemas sistêmicos (sistemas.js): só com a mesma versão do app (evita misturar arquivos de versões diferentes)
   const SIS = window.NSSistemas && window.NSSistemas.versao === APP_VERSION ? window.NSSistemas : null;
@@ -51,7 +51,8 @@
   let view = 'painel';
   let preview = null;      // importação aguardando confirmação
   let pubStatus = null;    // situação do data.txt publicado
-  let modo = (() => { try { const m = localStorage.getItem('ns-modo'); return ['DIA', 'SEMANA', 'MES'].includes(m) ? m : 'DIA'; } catch (e) { return 'DIA'; } })();
+  let modo = 'DIA';   // o app sempre abre no modo Dia (a troca para Semana/Mês vale só enquanto ele está aberto)
+  try { localStorage.removeItem('ns-modo'); } catch (e) {}   // limpa o modo que versões anteriores guardavam
 
   async function reload() {
     snaps = (await dbAll()).filter(s => s.id !== SIS_ID).sort((a, b) => (b.dataRef || '').localeCompare(a.dataRef || '') || b.id - a.id);
@@ -399,7 +400,6 @@
   function setModo(m, dir) {
     if (dir == null) dir = Math.sign(ORDEM_MODOS.indexOf(m) - ORDEM_MODOS.indexOf(modo)) || 1;
     modo = m; sel = null;
-    try { localStorage.setItem('ns-modo', m); } catch (e) {}
     const y = window.scrollY;
     renderPainel();
     window.scrollTo(0, y);

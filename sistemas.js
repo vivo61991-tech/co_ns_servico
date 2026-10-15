@@ -1,7 +1,7 @@
 /* NS Painel — Problemas sistêmicos (matriz sistemas × períodos, lista e detalhe dos chamados) */
 (function () {
   'use strict';
-  const VERSAO = '3.7.1';
+  const VERSAO = '3.7.2';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const HORA_INI = 8, HORA_FIM = 20, EXP = (HORA_FIM - HORA_INI) * 3600e3;   // expediente 08:00–20:00
   const WD = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
