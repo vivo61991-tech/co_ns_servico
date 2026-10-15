@@ -1,7 +1,7 @@
 /* NS Painel — Problemas sistêmicos (matriz sistemas × períodos, lista e detalhe dos chamados) */
 (function () {
   'use strict';
-  const VERSAO = '3.7.0';
+  const VERSAO = '3.7.1';
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const HORA_INI = 8, HORA_FIM = 20, EXP = (HORA_FIM - HORA_INI) * 3600e3;   // expediente 08:00–20:00
   const WD = ['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'];
@@ -280,7 +280,9 @@
     const extras = Object.keys(raw).filter(k => !usadas.has(k));
     const linhas = GRUPOS.map(([g, ks]) => `<div class="grp">${g}</div>` + ks.filter(k => k.startsWith('__') || k in raw).map(k => `<dt>${esc(rotulo(k))}</dt><dd>${val(k)}</dd>`).join('')).join('')
       + (extras.length ? `<div class="grp">Outras colunas</div>` + extras.map(k => `<dt>${esc(k)}</dt><dd>${esc(raw[k] || '—')}</dd>`).join('') : '');
-    const sub = `${cx ? `<span class="sh-per">${esc(cx.periodoTxt)}</span> · ` : ''}ID ${esc(c.id)} · ${esc(c.chamado || 'sem chamado')}`;
+    // abaixo do sistema: o período e o tempo do chamado no expediente desse período (% do dia/semana/mês)
+    const sub = cx ? `<span class="sh-per">${esc(cx.periodoTxt)}</span> · <span class="sh-exp">${noP ? `${fmtH(noP)} (${pctTxt(noP, cx.p)}${base}) no expediente` : 'fora do expediente'}</span>`
+      : (() => { const ms = msExpTotal(c); return ms ? `${fmtH(ms)} no expediente` : 'fora do expediente'; })();
     sh.innerHTML = cabFolha(c.sistema, sub, !!lista) + `<div class="sh-corpo"><dl class="det">${linhas}</dl></div>`;
     sh.querySelector('.sh-x').onclick = fecharFolha;
     if (lista) sh.querySelector('.sh-volta').onclick = mostrarLista;

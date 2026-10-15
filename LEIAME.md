@@ -1,4 +1,4 @@
-# Painel - Nível de Serviço (v3.7.0)
+# Painel - Nível de Serviço (v3.7.1)
 
 Painel de NS 5 min por **Dia**, **Semana** e **Mês**, alimentado pelo TXT exportado do Oracle SQL Developer.
 
